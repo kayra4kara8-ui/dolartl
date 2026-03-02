@@ -642,3 +642,4 @@ st.markdown("""
     💹 Dolar Kuru Sıçrama Analizi | Powered by Streamlit + Plotly
 </div>
 """, unsafe_allow_html=True)
+
