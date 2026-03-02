@@ -91,59 +91,114 @@ if uploaded_file is not None and analiz_btn:
     
     # Veriyi yükle ve işle
     with st.spinner("Veri analiz ediliyor..."):
-        df = pd.read_excel(uploaded_file, sheet_name='EVDS')
-        df.columns = ['Tarih', 'Dolar_Kuru']
-        df['Tarih'] = pd.to_datetime(df['Tarih'], format='%d-%m-%Y', errors='coerce')
-        
-        # Boş değerleri temizle
-        df = df.dropna().sort_values('Tarih').reset_index(drop=True)
-        
-        # Günlük değişim hesapla
-        df['Onceki_Kur'] = df['Dolar_Kuru'].shift(1)
-        df['Onceki_Tarih'] = df['Tarih'].shift(1)
-        df['Gun_Farki'] = (df['Tarih'] - df['Onceki_Tarih']).dt.days
-        df['Yuzde_Degisim'] = (df['Dolar_Kuru'] / df['Onceki_Kur'] - 1) * 100
-        df = df.dropna().reset_index(drop=True)
-        
-        # Tarih bilgileri
-        df['Gun'] = df['Tarih'].dt.day
-        df['Ay'] = df['Tarih'].dt.month
-        df['Yil'] = df['Tarih'].dt.year
-        df['Ay_Adi'] = df['Tarih'].dt.strftime('%B')
-        df['Gun_Adi'] = df['Tarih'].dt.strftime('%A')
-        df['Abs_Degisim'] = abs(df['Yuzde_Degisim'])
-        
-        # Yön filtresi
-        if yon == "Pozitif":
-            sicramalar = df[df['Yuzde_Degisim'] >= esik].copy()
-        elif yon == "Negatif":
-            sicramalar = df[df['Yuzde_Degisim'] <= -esik].copy()
-        else:
-            sicramalar = df[df['Abs_Degisim'] >= esik].copy()
-        
-        sicramalar = sicramalar.sort_values('Abs_Degisim', ascending=False)
-        
-        # Renk temasını ayarla
-        if renk_tema == "Modern":
-            renk_trend = '#3498DB'
-            renk_pozitif = '#2ECC71'
-            renk_negatif = '#E74C3C'
-            renk_esik = '#F39C12'
-        elif renk_tema == "Klasik":
-            renk_trend = 'blue'
-            renk_pozitif = 'green'
-            renk_negatif = 'red'
-            renk_esik = 'orange'
-        elif renk_tema == "Pastel":
-            renk_trend = '#6C5B7B'
-            renk_pozitif = '#99B898'
-            renk_negatif = '#F8A5A5'
-            renk_esik = '#F7D794'
-        else:
-            renk_trend = '#F08A5D'
-            renk_pozitif = '#4ECDC4'
-            renk_negatif = '#FF6B6B'
-            renk_esik = '#FFE66D'
+        try:
+            # Excel'i oku - sayfa adını otomatik bul
+            excel_file = pd.ExcelFile(uploaded_file)
+            sheet_name = excel_file.sheet_names[0]  # İlk sayfayı al
+            
+            df = pd.read_excel(uploaded_file, sheet_name=sheet_name)
+            
+            # Sütun isimlerini kontrol et
+            st.write("📋 Excel sütunları:", df.columns.tolist())
+            
+            # İlk iki sütunu al (tarih ve dolar kuru)
+            if len(df.columns) >= 2:
+                # İlk sütun tarih, ikinci sütun dolar kuru
+                tarih_sutunu = df.columns[0]
+                kur_sutunu = df.columns[1]
+                
+                df = df[[tarih_sutunu, kur_sutunu]].copy()
+                df.columns = ['Tarih', 'Dolar_Kuru']
+            else:
+                st.error("Excel dosyasında en az 2 sütun olmalı!")
+                st.stop()
+            
+            # Tarih sütununu dönüştür
+            try:
+                # Önce string'e çevir
+                df['Tarih'] = df['Tarih'].astype(str)
+                
+                # Farklı formatları dene
+                for date_format in ['%d-%m-%Y', '%d.%m.%Y', '%d/%m/%Y', '%Y-%m-%d']:
+                    try:
+                        df['Tarih'] = pd.to_datetime(df['Tarih'], format=date_format, errors='coerce')
+                        if df['Tarih'].notna().any():
+                            break
+                    except:
+                        continue
+                
+                # Hala çalışmadıysa otomatik dene
+                if df['Tarih'].isna().all():
+                    df['Tarih'] = pd.to_datetime(df['Tarih'], errors='coerce')
+                
+            except Exception as e:
+                st.error(f"Tarih dönüştürme hatası: {e}")
+                st.stop()
+            
+            # Dolar kurunu sayıya çevir
+            df['Dolar_Kuru'] = pd.to_numeric(df['Dolar_Kuru'], errors='coerce')
+            
+            # Boş değerleri temizle
+            df = df.dropna().sort_values('Tarih').reset_index(drop=True)
+            
+            if len(df) == 0:
+                st.error("Hiç geçerli veri bulunamadı!")
+                st.stop()
+            
+            # Günlük değişim hesapla
+            df['Onceki_Kur'] = df['Dolar_Kuru'].shift(1)
+            df['Onceki_Tarih'] = df['Tarih'].shift(1)
+            df['Gun_Farki'] = (df['Tarih'] - df['Onceki_Tarih']).dt.days
+            df['Yuzde_Degisim'] = (df['Dolar_Kuru'] / df['Onceki_Kur'] - 1) * 100
+            df = df.dropna().reset_index(drop=True)
+            
+            # Tarih bilgileri
+            df['Gun'] = df['Tarih'].dt.day
+            df['Ay'] = df['Tarih'].dt.month
+            df['Yil'] = df['Tarih'].dt.year
+            df['Ay_Adi'] = df['Tarih'].dt.strftime('%B')
+            df['Gun_Adi'] = df['Tarih'].dt.strftime('%A')
+            df['Abs_Degisim'] = abs(df['Yuzde_Degisim'])
+            
+            # Yön filtresi
+            if yon == "Pozitif":
+                sicramalar = df[df['Yuzde_Degisim'] >= esik].copy()
+            elif yon == "Negatif":
+                sicramalar = df[df['Yuzde_Degisim'] <= -esik].copy()
+            else:
+                sicramalar = df[df['Abs_Degisim'] >= esik].copy()
+            
+            sicramalar = sicramalar.sort_values('Abs_Degisim', ascending=False)
+            
+            # Renk temasını ayarla
+            if renk_tema == "Modern":
+                renk_trend = '#3498DB'
+                renk_pozitif = '#2ECC71'
+                renk_negatif = '#E74C3C'
+                renk_esik = '#F39C12'
+            elif renk_tema == "Klasik":
+                renk_trend = 'blue'
+                renk_pozitif = 'green'
+                renk_negatif = 'red'
+                renk_esik = 'orange'
+            elif renk_tema == "Pastel":
+                renk_trend = '#6C5B7B'
+                renk_pozitif = '#99B898'
+                renk_negatif = '#F8A5A5'
+                renk_esik = '#F7D794'
+            else:
+                renk_trend = '#F08A5D'
+                renk_pozitif = '#4ECDC4'
+                renk_negatif = '#FF6B6B'
+                renk_esik = '#FFE66D'
+            
+            # Başarı mesajı
+            st.success(f"✅ Veri başarıyla yüklendi! {len(df)} işlem günü bulundu.")
+            
+        except Exception as e:
+            st.error(f"❌ Dosya okuma hatası: {str(e)}")
+            st.info("💡 İpucu: Excel dosyanızın ilk sütunu tarih, ikinci sütunu dolar kuru olmalı.")
+            st.stop()
     
     # İSTATİSTİK KARTLARI
     st.markdown('<h2 class="sub-header">📊 ÖZET İSTATİSTİKLER</h2>', unsafe_allow_html=True)
@@ -283,7 +338,6 @@ if uploaded_file is not None and analiz_btn:
             fig3.add_trace(go.Histogram(
                 x=sicramalar['Yuzde_Degisim'],
                 nbinsx=20,
-                marker_color=[renk_pozitif if x > 0 else renk_negatif for x in sicramalar['Yuzde_Degisim']],
                 name='Sıçramalar'
             ))
             
@@ -409,11 +463,13 @@ else:
         
         ### 📁 Excel Formatı
         Dosyanızda şu sütunlar olmalı:
-        - **Tarih** (format: 01-01-2016)
-        - **TP_DK_USD_A_YTL** (dolar kuru)
+        - **İlk sütun**: Tarih (01-01-2016, 01.01.2016, 2016-01-01)
+        - **İkinci sütun**: Dolar Kuru (2.9181, 2,9181)
+        
+        > Not: Boş hücreler otomatik temizlenir!
         """)
         
-        st.info("💡 Örnek dosya kullanmak isterseniz, yukarıdaki 'data.xlsx' dosyasını yükleyin!")
+        st.info("💡 Örnek dosya: 'data.xlsx' (Tarih ve TP_DK_USD_A_YTL sütunları)")
 
 # Footer
 st.markdown("---")
