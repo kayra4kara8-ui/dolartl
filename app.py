@@ -4,43 +4,42 @@ import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
-import calendar
 from datetime import datetime
+import calendar
 
 # Sayfa yapılandırması
 st.set_page_config(
     page_title="Dolar Kuru Günlük Sıçrama Analizi",
-    page_icon="📊",
+    page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# CSS ile profesyonel görünüm
+# Profesyonel CSS
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
     
-    html, body, [class*="css"] {
+    * {
         font-family: 'Inter', sans-serif;
     }
     
-    .main-header {
+    .main-title {
         font-size: 3rem;
+        font-weight: 700;
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         text-align: center;
-        font-weight: 700;
-        margin-bottom: 1rem;
         padding: 1rem;
+        margin-bottom: 1rem;
     }
     
-    .sub-header {
+    .section-title {
         font-size: 1.8rem;
-        color: #2D3748;
         font-weight: 600;
-        margin-top: 2rem;
-        margin-bottom: 1rem;
+        color: #2d3748;
+        margin: 2rem 0 1rem 0;
         padding-bottom: 0.5rem;
         border-bottom: 3px solid #667eea;
     }
@@ -51,8 +50,8 @@ st.markdown("""
         padding: 1.5rem;
         box-shadow: 0 10px 30px rgba(0,0,0,0.1);
         text-align: center;
-        transition: transform 0.3s ease;
-        border: 1px solid #E2E8F0;
+        transition: transform 0.3s;
+        border: 1px solid #e2e8f0;
     }
     
     .stat-card:hover {
@@ -61,93 +60,72 @@ st.markdown("""
     }
     
     .stat-label {
-        font-size: 1rem;
+        font-size: 0.9rem;
         color: #718096;
         text-transform: uppercase;
         letter-spacing: 1px;
-        margin-bottom: 0.5rem;
     }
     
     .stat-value {
-        font-size: 2.5rem;
+        font-size: 2.2rem;
         font-weight: 700;
-        color: #2D3748;
+        color: #2d3748;
     }
     
     .stat-unit {
-        font-size: 1rem;
-        color: #A0AEC0;
-        margin-left: 0.25rem;
+        font-size: 0.9rem;
+        color: #a0aec0;
     }
     
     .positive {
-        color: #48BB78;
+        color: #48bb78;
         font-weight: 600;
     }
     
     .negative {
-        color: #F56565;
+        color: #f56565;
         font-weight: 600;
     }
     
-    .metric-box {
-        background: white;
+    .info-box {
+        background: linear-gradient(135deg, #f7fafc 0%, #edf2f7 100%);
         border-radius: 10px;
         padding: 1rem;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        margin: 1rem 0;
+        border-left: 5px solid #667eea;
+    }
+    
+    .metric-badge {
+        background: white;
+        border-radius: 8px;
+        padding: 0.5rem 1rem;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
         text-align: center;
-        margin-bottom: 0.5rem;
     }
     
-    .metric-value {
-        font-size: 1.8rem;
-        font-weight: 700;
-        color: #2D3748;
-    }
-    
-    .metric-label {
-        font-size: 0.9rem;
-        color: #718096;
-    }
-    
-    .sicrama-karti {
+    .jump-card {
         background: white;
         border-radius: 10px;
         padding: 1rem;
-        margin: 0.5rem 0;
-        border-left: 5px solid;
+        margin: 0.5rem;
         box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        border-left: 5px solid;
         transition: transform 0.2s;
     }
     
-    .sicrama-karti:hover {
+    .jump-card:hover {
         transform: scale(1.02);
         box-shadow: 0 5px 20px rgba(0,0,0,0.1);
-    }
-    
-    .kontrol-panel {
-        background: #f8f9fa;
-        border-radius: 15px;
-        padding: 1.5rem;
-        margin-bottom: 2rem;
-        border: 1px solid #e9ecef;
     }
 </style>
 """, unsafe_allow_html=True)
 
 # Başlık
-st.markdown('<h1 class="main-header">📊 DOLAR KURU GÜNLÜK SIÇRAMA ANALİZİ</h1>', unsafe_allow_html=True)
-st.markdown("Excel dosyanızı yükleyin, günlük sıçramaları keşfedin!")
+st.markdown('<div class="main-title">📈 DOLAR KURU GÜNLÜK SIÇRAMA ANALİZİ</div>', unsafe_allow_html=True)
 
 # Sidebar
 with st.sidebar:
-    st.markdown("""
-    <div style="text-align: center; padding: 1rem;">
-        <img src="https://img.icons8.com/fluency/96/000000/line-chart.png" style="width: 80px;">
-        <h2 style="color: #2D3748; margin-top: 0.5rem;">Analiz Paneli</h2>
-    </div>
-    """, unsafe_allow_html=True)
-    
+    st.markdown("### ⚙️ ANALİZ PANELİ")
     st.markdown("---")
     
     # Dosya yükleme
@@ -157,63 +135,51 @@ with st.sidebar:
         help="İlk sütun: Tarih, İkinci sütun: Dolar Kuru"
     )
     
-    if uploaded_file is not None:
-        st.success("✅ Dosya başarıyla yüklendi!")
-        
+    if uploaded_file:
+        st.success("✅ Dosya yüklendi!")
         st.markdown("---")
-        st.markdown("### ⚙️ GÜNLÜK SIÇRAMA AYARLARI")
         
-        # Eşik değeri
+        # Analiz parametreleri
+        st.markdown("### 🎯 SIÇRAMA PARAMETRELERİ")
+        
         esik = st.slider(
-            "🎯 Sıçrama Eşiği (%)",
+            "Eşik değeri (%)",
             min_value=0.5, max_value=10.0, value=2.0, step=0.5,
-            help="Bu değerin üzerindeki günlük değişimler sıçrama olarak kabul edilir"
+            help="Bu değerin üzerindeki günlük değişimler sıçrama kabul edilir"
         )
         
         # Gösterilecek sıçrama sayısı
-        gosterim_sayisi = st.selectbox(
-            "📊 Gösterilecek Sıçrama Sayısı",
-            options=[10, 20, 30, 50, 75, 100, "Tümü"],
+        gosterim = st.selectbox(
+            "Gösterilecek en büyük sıçrama sayısı",
+            options=[10, 20, 30, 40, 50],
             index=2,
-            help="En büyük kaç günlük sıçrama gösterilsin?"
+            help="En büyük kaç sıçrama işaretlensin?"
         )
         
-        # Sıçrama yönü filtresi
-        yon_filtre = st.radio(
-            "🔄 Sıçrama Yönü",
-            options=["Tümü", "Sadece Pozitif", "Sadece Negatif"],
-            index=0,
+        # Sıçrama yönü
+        yon = st.radio(
+            "Sıçrama yönü",
+            options=["Tümü", "Sadece pozitif 📈", "Sadece negatif 📉"],
             horizontal=True
         )
         
-        st.markdown("---")
-        st.markdown("### 📈 GRAFİK AYARLARI")
-        
         # Grafik tipi
+        st.markdown("### 📊 GRAFİK TİPİ")
         grafik_tipi = st.selectbox(
-            "Grafik Tipi",
-            options=["Dağılım (Scatter)", "Çizgi + Nokta", "Sadece Noktalar"],
-            index=0
+            "Grafik görünümü",
+            options=["Line + Nokta", "Sadece Line", "Sadece Noktalar"]
         )
         
-        # Renk teması
-        renk_temasi = st.selectbox(
-            "🎨 Renk Teması",
-            options=["Profesyonel", "Canlı", "Pastel", "Karanlık"],
-            index=0
-        )
-        
-        # Analiz butonu
         analiz_btn = st.button(
-            "🚀 GÜNLÜK SIÇRAMA ANALİZİ",
+            "🚀 ANALİZİ ÇALIŞTIR",
             type="primary",
             use_container_width=True
         )
 
 # Ana içerik
-if uploaded_file is not None and analiz_btn:
+if uploaded_file and analiz_btn:
     
-    with st.spinner("🔍 Günlük sıçramalar analiz ediliyor..."):
+    with st.spinner("📊 Günlük sıçramalar analiz ediliyor..."):
         try:
             # Excel okuma
             excel_file = pd.ExcelFile(uploaded_file)
@@ -228,299 +194,271 @@ if uploaded_file is not None and analiz_btn:
                 st.error("❌ Excel dosyasında en az 2 sütun olmalı!")
                 st.stop()
             
-            # Veri temizliği
+            # NaN değerleri temizle
             df['Tarih'] = pd.to_datetime(df['Tarih'], errors='coerce')
             df['Dolar_Kuru'] = pd.to_numeric(df['Dolar_Kuru'], errors='coerce')
+            
+            # NaN değerleri olan satırları temizle
+            initial_len = len(df)
             df = df.dropna().sort_values('Tarih').reset_index(drop=True)
+            cleaned_len = len(df)
             
-            if len(df) == 0:
-                st.error("❌ Hiç geçerli veri bulunamadı!")
-                st.stop()
-            
-            # GÜNLÜK DEĞİŞİM HESAPLAMA (bir önceki işlem gününe göre)
+            # Günlük değişim hesapla (bir önceki veri olan güne göre)
             df['Onceki_Kur'] = df['Dolar_Kuru'].shift(1)
             df['Onceki_Tarih'] = df['Tarih'].shift(1)
             df['Gun_Farki'] = (df['Tarih'] - df['Onceki_Tarih']).dt.days
             df['Yuzde_Degisim'] = (df['Dolar_Kuru'] / df['Onceki_Kur'] - 1) * 100
             df['TL_Degisim'] = df['Dolar_Kuru'] - df['Onceki_Kur']
+            
+            # İlk satırı temizle (NaN)
             df = df.dropna().reset_index(drop=True)
             
-            # Günlük veriler için tarih özellikleri
+            # Günlük veriler için ek bilgiler
             df['Yil'] = df['Tarih'].dt.year
             df['Ay'] = df['Tarih'].dt.month
             df['Gun'] = df['Tarih'].dt.day
             df['Ay_Adi'] = df['Tarih'].dt.strftime('%B')
             df['Gun_Adi'] = df['Tarih'].dt.strftime('%A')
-            df['Hafta'] = df['Tarih'].dt.isocalendar().week
-            df['Yil_Ay'] = df['Tarih'].dt.strftime('%Y-%m')
             df['Abs_Degisim'] = abs(df['Yuzde_Degisim'])
             
-            # GÜNLÜK SIÇRAMA TESPİTİ
+            # Sıçrama tespiti
             df['Sicrama'] = df['Abs_Degisim'] >= esik
             
-            # Sıçrama tipini belirle
-            df['Sicrama_Tipi'] = 'Normal'
-            df.loc[df['Yuzde_Degisim'] > esik, 'Sicrama_Tipi'] = 'Pozitif'
-            df.loc[df['Yuzde_Degisim'] < -esik, 'Sicrama_Tipi'] = 'Negatif'
-            
-            # Sıçramaları filtrele (yön filtresine göre)
-            if yon_filtre == "Sadece Pozitif":
-                sicramalar = df[df['Yuzde_Degisim'] > esik].copy()
-            elif yon_filtre == "Sadece Negatif":
-                sicramalar = df[df['Yuzde_Degisim'] < -esik].copy()
+            # Yön filtresine göre sıçramaları seç
+            if yon == "Sadece pozitif 📈":
+                sicramalar = df[df['Yuzde_Degisim'] >= esik].copy()
+            elif yon == "Sadece negatif 📉":
+                sicramalar = df[df['Yuzde_Degisim'] <= -esik].copy()
             else:
                 sicramalar = df[df['Sicrama']].copy()
             
-            # Sıçramaları büyüklüğe göre sırala
+            # En büyük sıçramaları sırala
             sicramalar = sicramalar.sort_values('Abs_Degisim', ascending=False)
+            top_sicramalar = sicramalar.head(gosterim)
             
-            # Gösterim sayısını ayarla
-            toplam_sicrama = len(sicramalar)
-            if gosterim_sayisi != "Tümü":
-                sicramalar = sicramalar.head(gosterim_sayisi)
+            # İstatistikler
+            poz_say = len(df[df['Yuzde_Degisim'] > 0])
+            neg_say = len(df[df['Yuzde_Degisim'] < 0])
+            poz_sicra = len(sicramalar[sicramalar['Yuzde_Degisim'] > 0])
+            neg_sicra = len(sicramalar[sicramalar['Yuzde_Degisim'] < 0])
             
         except Exception as e:
             st.error(f"❌ Hata: {str(e)}")
             st.stop()
     
-    # ========== KONTROL PANELİ ==========
-    st.markdown('<div class="kontrol-panel">', unsafe_allow_html=True)
-    col1, col2, col3, col4 = st.columns(4)
+    # Bilgi mesajı
+    if initial_len > cleaned_len:
+        st.info(f"📌 {initial_len - cleaned_len} adet NaN (boş) değer temizlendi.")
+    
+    # İstatistik kartları
+    st.markdown('<div class="section-title">📊 GÜNLÜK İSTATİSTİKLER</div>', unsafe_allow_html=True)
+    
+    col1, col2, col3, col4, col5 = st.columns(5)
     
     with col1:
         st.markdown(f"""
-        <div class="metric-box">
+        <div class="stat-card">
             <div class="stat-label">Toplam Gün</div>
-            <div class="metric-value">{len(df):,}</div>
+            <div class="stat-value">{len(df):,}</div>
+            <div class="stat-unit">işlem günü</div>
         </div>
         """, unsafe_allow_html=True)
     
     with col2:
         st.markdown(f"""
-        <div class="metric-box">
-            <div class="stat-label">Eşik Değeri</div>
-            <div class="metric-value">%{esik}</div>
+        <div class="stat-card">
+            <div class="stat-label">Ort. Günlük Değişim</div>
+            <div class="stat-value">%{df['Yuzde_Degisim'].mean():.2f}</div>
+            <div class="stat-unit">±%{df['Yuzde_Degisim'].std():.2f}</div>
         </div>
         """, unsafe_allow_html=True)
     
     with col3:
         st.markdown(f"""
-        <div class="metric-box">
-            <div class="stat-label">Toplam Sıçrama</div>
-            <div class="metric-value">{toplam_sicrama}</div>
+        <div class="stat-card">
+            <div class="stat-label">Pozitif/Negatif Gün</div>
+            <div class="stat-value"><span class="positive">{poz_say}</span> / <span class="negative">{neg_say}</span></div>
+            <div class="stat-unit">gün</div>
         </div>
         """, unsafe_allow_html=True)
     
     with col4:
         st.markdown(f"""
-        <div class="metric-box">
-            <div class="stat-label">Gösterilen</div>
-            <div class="metric-value">{len(sicramalar)}</div>
+        <div class="stat-card">
+            <div class="stat-label">Toplam Sıçrama</div>
+            <div class="stat-value">{len(sicramalar)}</div>
+            <div class="stat-unit">>{esik}%</div>
         </div>
         """, unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
     
-    # ========== GÜNLÜK SIÇRAMA GRAFİĞİ ==========
-    st.markdown('<h2 class="sub-header">📈 GÜNLÜK SIÇRAMALAR</h2>', unsafe_allow_html=True)
+    with col5:
+        st.markdown(f"""
+        <div class="stat-card">
+            <div class="stat-label">Sıçrama Oranı</div>
+            <div class="stat-value">%{len(sicramalar)/len(df)*100:.1f}</div>
+            <div class="stat-unit">günlerin</div>
+        </div>
+        """, unsafe_allow_html=True)
     
-    # Renk teması
-    if renk_temasi == "Profesyonel":
-        renk_trend = '#4299E1'
-        renk_pozitif = '#48BB78'
-        renk_negatif = '#F56565'
-        renk_normal = '#CBD5E0'
-    elif renk_temasi == "Canlı":
-        renk_trend = '#FF6B6B'
-        renk_pozitif = '#4ECDC4'
-        renk_negatif = '#FFE66D'
-        renk_normal = '#95A5A6'
-    elif renk_temasi == "Pastel":
-        renk_trend = '#6C5B7B'
-        renk_pozitif = '#99B898'
-        renk_negatif = '#F8A5A5'
-        renk_normal = '#BDC3C7'
-    else:
-        renk_trend = '#2C3E50'
-        renk_pozitif = '#27AE60'
-        renk_negatif = '#C0392B'
-        renk_normal = '#7F8C8D'
+    # ANA GRAFİK - LINE GRAFİK
+    st.markdown('<div class="section-title">📈 GÜNLÜK DOLAR KURU VE SIÇRAMALAR</div>', unsafe_allow_html=True)
     
-    # Ana grafik - Günlük sıçramalar
-    fig = make_subplots(
-        rows=2, cols=1,
-        shared_xaxes=True,
-        vertical_spacing=0.1,
-        row_heights=[0.6, 0.4],
-        subplot_titles=(f'GÜNLÜK DOLAR KURU VE {len(sicramalar)} BÜYÜK SIÇRAMA', 
-                       f'GÜNLÜK YÜZDE DEĞİŞİMLER (Eşik: %{esik})')
-    )
+    fig = go.Figure()
     
-    # 1. Üst grafik - Dolar kuru ve sıçramalar
-    fig.add_trace(
-        go.Scatter(
-            x=df['Tarih'], y=df['Dolar_Kuru'],
-            mode='lines',
-            name='Dolar Kuru',
-            line=dict(color=renk_trend, width=1.5),
-            opacity=0.7,
-            hovertemplate='<b>%{x|%d.%m.%Y}</b><br>Kur: %{y:.4f} TL<extra></extra>'
-        ),
-        row=1, col=1
-    )
+    # Ana line grafik
+    fig.add_trace(go.Scatter(
+        x=df['Tarih'],
+        y=df['Dolar_Kuru'],
+        mode='lines',
+        name='Dolar Kuru',
+        line=dict(color='#4299E1', width=2),
+        hovertemplate='<b>%{x|%d.%m.%Y}</b><br>Dolar Kuru: %{y:.4f} TL<extra></extra>'
+    ))
     
-    # Sıçramaları ekle (büyüklüklerine göre boyutlandır)
-    poz_sicra = sicramalar[sicramalar['Yuzde_Degisim'] > 0]
-    neg_sicra = sicramalar[sicramalar['Yuzde_Degisim'] < 0]
+    # En büyük sıçramaları işaretle
+    poz_top = top_sicramalar[top_sicramalar['Yuzde_Degisim'] > 0]
+    neg_top = top_sicramalar[top_sicramalar['Yuzde_Degisim'] < 0]
     
-    if len(poz_sicra) > 0:
-        fig.add_trace(
-            go.Scatter(
-                x=poz_sicra['Tarih'], y=poz_sicra['Dolar_Kuru'],
-                mode='markers',
-                name=f'Pozitif Sıçrama ({len(poz_sicra)})',
-                marker=dict(
-                    color=renk_pozitif,
-                    size=poz_sicra['Abs_Degisim']*3,
-                    line=dict(color='white', width=1),
-                    symbol='circle'
-                ),
-                hovertemplate='<b>%{x|%d.%m.%Y}</b><br>Kur: %{y:.4f} TL<br>Değişim: +%{text:.2f}%<extra></extra>',
-                text=poz_sicra['Yuzde_Degisim']
-            ),
-            row=1, col=1
-        )
-    
-    if len(neg_sicra) > 0:
-        fig.add_trace(
-            go.Scatter(
-                x=neg_sicra['Tarih'], y=neg_sicra['Dolar_Kuru'],
-                mode='markers',
-                name=f'Negatif Sıçrama ({len(neg_sicra)})',
-                marker=dict(
-                    color=renk_negatif,
-                    size=neg_sicra['Abs_Degisim']*3,
-                    line=dict(color='white', width=1),
-                    symbol='circle'
-                ),
-                hovertemplate='<b>%{x|%d.%m.%Y}</b><br>Kur: %{y:.4f} TL<br>Değişim: %{text:.2f}%<extra></extra>',
-                text=neg_sicra['Yuzde_Degisim']
-            ),
-            row=1, col=1
-        )
-    
-    # 2. Alt grafik - Günlük yüzde değişimler
-    # Tüm günler (arka plan)
-    fig.add_trace(
-        go.Scatter(
-            x=df['Tarih'], y=df['Yuzde_Degisim'],
+    if len(poz_top) > 0:
+        fig.add_trace(go.Scatter(
+            x=poz_top['Tarih'],
+            y=poz_top['Dolar_Kuru'],
             mode='markers',
-            name='Tüm Günler',
+            name=f'Pozitif Sıçrama (Top {len(poz_top)})',
             marker=dict(
-                color=renk_normal,
-                size=3,
-                opacity=0.3
+                symbol='circle',
+                size=poz_top['Abs_Degisim']*3,
+                color='#48BB78',
+                line=dict(color='white', width=1)
             ),
-            hovertemplate='<b>%{x|%d.%m.%Y}</b><br>Değişim: %{y:.2f}%<extra></extra>'
-        ),
-        row=2, col=1
-    )
+            hovertemplate='<b>%{x|%d.%m.%Y}</b><br>Kur: %{y:.4f} TL<br>Değişim: +%{customdata:.2f}%<extra></extra>',
+            customdata=poz_top['Yuzde_Degisim']
+        ))
     
-    # Sıçramaları vurgula
-    if len(poz_sicra) > 0:
-        fig.add_trace(
-            go.Scatter(
-                x=poz_sicra['Tarih'], y=poz_sicra['Yuzde_Degisim'],
-                mode='markers',
-                name='Pozitif Sıçrama',
-                marker=dict(
-                    color=renk_pozitif,
-                    size=poz_sicra['Abs_Degisim']*1.5,
-                    line=dict(color='white', width=0.5)
-                ),
-                showlegend=False,
-                hovertemplate='<b>%{x|%d.%m.%Y}</b><br>Değişim: +%{y:.2f}%<extra></extra>'
+    if len(neg_top) > 0:
+        fig.add_trace(go.Scatter(
+            x=neg_top['Tarih'],
+            y=neg_top['Dolar_Kuru'],
+            mode='markers',
+            name=f'Negatif Sıçrama (Top {len(neg_top)})',
+            marker=dict(
+                symbol='circle',
+                size=neg_top['Abs_Degisim']*3,
+                color='#F56565',
+                line=dict(color='white', width=1)
             ),
-            row=2, col=1
-        )
-    
-    if len(neg_sicra) > 0:
-        fig.add_trace(
-            go.Scatter(
-                x=neg_sicra['Tarih'], y=neg_sicra['Yuzde_Degisim'],
-                mode='markers',
-                name='Negatif Sıçrama',
-                marker=dict(
-                    color=renk_negatif,
-                    size=neg_sicra['Abs_Degisim']*1.5,
-                    line=dict(color='white', width=0.5)
-                ),
-                showlegend=False,
-                hovertemplate='<b>%{x|%d.%m.%Y}</b><br>Değişim: %{y:.2f}%<extra></extra>'
-            ),
-            row=2, col=1
-        )
-    
-    # Eşik çizgileri
-    fig.add_hline(y=esik, line_dash="dash", line_color=renk_pozitif, 
-                  annotation_text=f"+{esik}%", annotation_position="top left",
-                  row=2, col=1)
-    fig.add_hline(y=-esik, line_dash="dash", line_color=renk_negatif,
-                  annotation_text=f"-{esik}%", annotation_position="bottom left",
-                  row=2, col=1)
-    fig.add_hline(y=0, line_color='gray', line_width=0.5, row=2, col=1)
+            hovertemplate='<b>%{x|%d.%m.%Y}</b><br>Kur: %{y:.4f} TL<br>Değişim: %{customdata:.2f}%<extra></extra>',
+            customdata=neg_top['Yuzde_Degisim']
+        ))
     
     # Layout düzenlemeleri
     fig.update_layout(
-        height=700,
-        template='plotly_white',
+        title=dict(
+            text=f'DOLAR KURU - EN BÜYÜK {gosterim} GÜNLÜK SIÇRAMA (Eşik: %{esik})',
+            font=dict(size=16, weight=600)
+        ),
+        xaxis=dict(
+            title='Tarih',
+            tickformat='%Y',
+            gridcolor='#E2E8F0'
+        ),
+        yaxis=dict(
+            title='Dolar Kuru (TL)',
+            gridcolor='#E2E8F0'
+        ),
         hovermode='x unified',
-        showlegend=True,
+        template='plotly_white',
+        height=600,
         legend=dict(
-            orientation="h",
-            yanchor="bottom",
+            orientation='h',
+            yanchor='bottom',
             y=1.02,
-            xanchor="right",
+            xanchor='right',
             x=1
-        )
+        ),
+        margin=dict(l=50, r=50, t=80, b=50)
     )
-    
-    fig.update_xaxes(title_text="", row=1, col=1)
-    fig.update_xaxes(title_text="Tarih", row=2, col=1)
-    
-    fig.update_yaxes(title_text="Dolar Kuru (TL)", row=1, col=1)
-    fig.update_yaxes(title_text="Değişim (%)", row=2, col=1)
     
     st.plotly_chart(fig, use_container_width=True)
     
-    # ========== GÜNLÜK SIÇRAMA LİSTESİ ==========
-    st.markdown('<h2 class="sub-header">📋 GÜNLÜK SIÇRAMA LİSTESİ</h2>', unsafe_allow_html=True)
+    # GÜNLÜK DEĞİŞİM GRAFİĞİ
+    st.markdown('<div class="section-title">📊 GÜNLÜK YÜZDE DEĞİŞİMLER</div>', unsafe_allow_html=True)
     
-    # Filtreleme seçenekleri
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        yil_filtre = st.multiselect("Yıl Filtresi", options=sorted(sicramalar['Yil'].unique()))
-    with col2:
-        ay_filtre = st.multiselect("Ay Filtresi", options=range(1, 13), format_func=lambda x: calendar.month_name[x])
-    with col3:
-        siralama = st.selectbox("Sıralama", options=["Büyükten Küçüğe", "Küçükten Büyüğe", "Tarihe Göre"])
+    fig2 = go.Figure()
     
-    # Filtre uygula
-    filtered_sicramalar = sicramalar.copy()
-    if yil_filtre:
-        filtered_sicramalar = filtered_sicramalar[filtered_sicramalar['Yil'].isin(yil_filtre)]
-    if ay_filtre:
-        filtered_sicramalar = filtered_sicramalar[filtered_sicramalar['Ay'].isin(ay_filtre)]
+    # Tüm değişimler (ince çizgi)
+    fig2.add_trace(go.Scatter(
+        x=df['Tarih'],
+        y=df['Yuzde_Degisim'],
+        mode='lines',
+        name='Günlük Değişim',
+        line=dict(color='#CBD5E0', width=1),
+        opacity=0.7,
+        hovertemplate='<b>%{x|%d.%m.%Y}</b><br>Değişim: %{y:.2f}%<extra></extra>'
+    ))
     
-    # Sıralama
-    if siralama == "Büyükten Küçüğe":
-        filtered_sicramalar = filtered_sicramalar.sort_values('Abs_Degisim', ascending=False)
-    elif siralama == "Küçükten Büyüğe":
-        filtered_sicramalar = filtered_sicramalar.sort_values('Abs_Degisim', ascending=True)
-    else:
-        filtered_sicramalar = filtered_sicramalar.sort_values('Tarih', ascending=False)
+    # En büyük sıçramalar
+    if len(poz_top) > 0:
+        fig2.add_trace(go.Scatter(
+            x=poz_top['Tarih'],
+            y=poz_top['Yuzde_Degisim'],
+            mode='markers',
+            name=f'Pozitif Sıçrama',
+            marker=dict(
+                size=10,
+                color='#48BB78',
+                line=dict(color='white', width=1)
+            ),
+            showlegend=False
+        ))
     
-    # Tablo için hazırlık
-    tablo_df = filtered_sicramalar[[
+    if len(neg_top) > 0:
+        fig2.add_trace(go.Scatter(
+            x=neg_top['Tarih'],
+            y=neg_top['Yuzde_Degisim'],
+            mode='markers',
+            name=f'Negatif Sıçrama',
+            marker=dict(
+                size=10,
+                color='#F56565',
+                line=dict(color='white', width=1)
+            ),
+            showlegend=False
+        ))
+    
+    # Eşik çizgileri
+    fig2.add_hline(
+        y=esik,
+        line_dash='dash',
+        line_color='#48BB78',
+        annotation_text=f'+{esik}%',
+        annotation_position='top left'
+    )
+    fig2.add_hline(
+        y=-esik,
+        line_dash='dash',
+        line_color='#F56565',
+        annotation_text=f'-{esik}%',
+        annotation_position='bottom left'
+    )
+    fig2.add_hline(y=0, line_color='black', line_width=0.5)
+    
+    fig2.update_layout(
+        title=f'GÜNLÜK YÜZDE DEĞİŞİMLER VE {esik}% EŞİĞİ',
+        xaxis=dict(title='Tarih', tickformat='%Y'),
+        yaxis=dict(title='Değişim (%)', gridcolor='#E2E8F0'),
+        height=400,
+        template='plotly_white',
+        hovermode='x unified'
+    )
+    
+    st.plotly_chart(fig2, use_container_width=True)
+    
+    # EN BÜYÜK SIÇRAMALAR TABLOSU
+    st.markdown(f'<div class="section-title">🏆 EN BÜYÜK {gosterim} GÜNLÜK SIÇRAMA</div>', unsafe_allow_html=True)
+    
+    # Tablo için veri hazırlama
+    tablo_df = top_sicramalar[[
         'Tarih', 'Gun', 'Ay_Adi', 'Yil', 'Gun_Adi',
         'Dolar_Kuru', 'Onceki_Kur', 'Yuzde_Degisim', 'TL_Degisim', 'Gun_Farki'
     ]].copy()
@@ -530,37 +468,46 @@ if uploaded_file is not None and analiz_btn:
     tablo_df['Onceki_Kur'] = tablo_df['Onceki_Kur'].round(4)
     tablo_df['Yuzde_Degisim'] = tablo_df['Yuzde_Degisim'].round(2)
     tablo_df['TL_Degisim'] = tablo_df['TL_Degisim'].round(4)
-    tablo_df['Yon'] = tablo_df['Yuzde_Degisim'].apply(lambda x: '📈' if x > 0 else '📉')
     
     tablo_df.insert(0, '#', range(1, len(tablo_df) + 1))
     
-    # Tabloyu göster
+    # Renkli gösterim için
+    def renklendir(val):
+        if val > 0:
+            return f'<span class="positive">%{val:+.2f}</span>'
+        elif val < 0:
+            return f'<span class="negative">%{val:+.2f}</span>'
+        return f'%{val:.2f}'
+    
+    tablo_df['Değişim'] = tablo_df['Yuzde_Degisim'].apply(renklendir)
+    
     st.dataframe(
-        tablo_df,
+        tablo_df[[
+            '#', 'Tarih', 'Gun', 'Ay_Adi', 'Yil', 'Gun_Adi',
+            'Dolar_Kuru', 'Onceki_Kur', 'Değişim', 'TL_Degisim', 'Gun_Farki'
+        ]],
         column_config={
-            '#': st.column_config.NumberColumn("No", width=50),
-            'Tarih': "Tarih",
-            'Gun': "Gün",
-            'Ay_Adi': "Ay",
-            'Yil': "Yıl",
-            'Gun_Adi': "Gün Adı",
-            'Dolar_Kuru': "Yeni Kur (TL)",
-            'Onceki_Kur': "Önceki Kur",
-            'Yuzde_Degisim': "Değişim %",
-            'TL_Degisim': "TL Değişim",
-            'Gun_Farki': "Gün Farkı",
-            'Yon': ""
+            '#': 'No',
+            'Tarih': 'Tarih',
+            'Gun': 'Gün',
+            'Ay_Adi': 'Ay',
+            'Yil': 'Yıl',
+            'Gun_Adi': 'Gün Adı',
+            'Dolar_Kuru': 'Yeni Kur (TL)',
+            'Onceki_Kur': 'Önceki Kur',
+            'Değişim': 'Değişim',
+            'TL_Degisim': 'TL Değişim',
+            'Gun_Farki': 'Gün Farkı'
         },
         use_container_width=True,
         height=500
     )
     
-    # ========== EN BÜYÜK GÜNLÜK SIÇRAMALAR ==========
-    st.markdown('<h2 class="sub-header">⚡ EN BÜYÜK 10 GÜNLÜK SIÇRAMA</h2>', unsafe_allow_html=True)
+    # EN BÜYÜK 10 KART
+    st.markdown('<div class="section-title">⚡ EN BÜYÜK 10 GÜNLÜK SIÇRAMA</div>', unsafe_allow_html=True)
     
-    top_10 = sicramalar.head(10)
+    top_10 = top_sicramalar.head(10)
     
-    # 5 kolonlu kart gösterimi
     cols = st.columns(5)
     for i, (_, row) in enumerate(top_10.iterrows()):
         with cols[i % 5]:
@@ -568,174 +515,129 @@ if uploaded_file is not None and analiz_btn:
             yon = '📈' if row['Yuzde_Degisim'] > 0 else '📉'
             
             st.markdown(f"""
-            <div class="sicrama-karti" style="border-left-color: {renk};">
+            <div class="jump-card" style="border-left-color: {renk};">
                 <div style="font-size: 1.2rem; font-weight: 700;">#{i+1} {yon}</div>
-                <div style="font-size: 1rem; color: #4A5568;">{row['Tarih'].strftime('%d.%m.%Y')}</div>
+                <div style="color: #4a5568;">{row['Tarih'].strftime('%d.%m.%Y')}</div>
                 <div style="font-size: 1.5rem; font-weight: 700; color: {renk};">%{row['Yuzde_Degisim']:+.2f}</div>
-                <div style="font-size: 0.9rem; color: #718096;">{row['Gun_Adi']}, {row['Ay_Adi']}</div>
-                <div style="font-size: 0.9rem;">{row['Onceki_Kur']:.4f} → {row['Dolar_Kuru']:.4f} TL</div>
-                <div style="font-size: 0.8rem; color: #A0AEC0;">{row['Gun_Farki']} gün sonra</div>
+                <div style="font-size: 0.9rem; color: #718096;">{row['Gun_Adi']}</div>
+                <div style="font-size: 0.9rem;">{row['Onceki_Kur']:.4f} → {row['Dolar_Kuru']:.4f}</div>
+                <div style="font-size: 0.8rem; color: #a0aec0;">{row['Gun_Farki']} gün sonra</div>
             </div>
             """, unsafe_allow_html=True)
     
-    # ========== ZAMAN BAZLI ANALİZLER (İkincil) ==========
-    st.markdown('<h2 class="sub-header">📊 ZAMAN BAZLI ANALİZLER</h2>', unsafe_allow_html=True)
+    # ZAMAN ANALİZLERİ
+    st.markdown('<div class="section-title">📅 ZAMAN BAZLI ANALİZLER</div>', unsafe_allow_html=True)
     
-    tab1, tab2, tab3 = st.tabs(["📅 Günlere Göre Dağılım", "📆 Aylara Göre Dağılım", "📈 Trend Analizi"])
+    tab1, tab2, tab3 = st.tabs(["📆 Aylık Dağılım", "📊 Günlük Pattern", "📈 Yıllık Trend"])
     
     with tab1:
-        # Haftanın günlerine göre dağılım
-        gun_sirasi = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-        gun_adlari_tr = ['Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi', 'Pazar']
+        # Aylık sıçrama dağılımı
+        aylik_df = sicramalar.groupby('Ay').size().reset_index(name='Sayı')
+        aylik_df['Ay_Adi'] = aylik_df['Ay'].apply(lambda x: calendar.month_abbr[x])
         
-        if len(sicramalar) > 0:
-            haftalik_df = sicramalar.groupby('Gun_Adi').size().reindex(gun_sirasi).reset_index()
-            haftalik_df.columns = ['Gün', 'Sayı']
-            haftalik_df['Gün_TR'] = gun_adlari_tr
-            haftalik_df = haftalik_df.fillna(0)
-            
-            fig_gun = px.bar(
-                haftalik_df, 
-                x='Gün_TR', 
-                y='Sayı',
-                title='Haftanın Günlerine Göre Sıçrama Sayıları',
-                color='Sayı',
-                color_continuous_scale='Viridis',
-                labels={'Sayı': 'Sıçrama Sayısı', 'Gün_TR': 'Gün'}
-            )
-            fig_gun.update_layout(height=400)
-            st.plotly_chart(fig_gun, use_container_width=True)
-            
-            # İstatistikler
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                max_gun = haftalik_df.loc[haftalik_df['Sayı'].idxmax()]
-                st.info(f"📊 En çok sıçrama: **{max_gun['Gün_TR']}** ({int(max_gun['Sayı'])} sıçrama)")
-            with col2:
-                min_gun = haftalik_df.loc[haftalik_df[haftalik_df['Sayı'] > 0]['Sayı'].idxmin()]
-                st.info(f"📉 En az sıçrama: **{min_gun['Gün_TR']}** ({int(min_gun['Sayı'])} sıçrama)")
-            with col3:
-                hafta_ici = haftalik_df.iloc[:5]['Sayı'].sum()
-                hafta_sonu = haftalik_df.iloc[5:]['Sayı'].sum()
-                st.info(f"📅 Hafta içi: {int(hafta_ici)} | Hafta sonu: {int(hafta_sonu)}")
-        else:
-            st.warning("Bu eşikte sıçrama verisi yok")
+        fig_ay = px.bar(
+            aylik_df,
+            x='Ay_Adi',
+            y='Sayı',
+            title='Aylara Göre Günlük Sıçrama Sayıları',
+            color='Sayı',
+            color_continuous_scale='Viridis',
+            labels={'Sayı': 'Sıçrama Sayısı', 'Ay_Adi': 'Ay'}
+        )
+        fig_ay.update_layout(height=400)
+        st.plotly_chart(fig_ay, use_container_width=True)
     
     with tab2:
-        # Aylara göre dağılım
-        if len(sicramalar) > 0:
-            aylik_df = sicramalar.groupby('Ay').size().reset_index(name='Sayı')
-            aylik_df['Ay_Adi'] = aylik_df['Ay'].apply(lambda x: calendar.month_name[x])
-            
-            fig_ay = px.bar(
-                aylik_df, 
-                x='Ay_Adi', 
-                y='Sayı',
-                title='Aylara Göre Sıçrama Sayıları',
-                color='Sayı',
-                color_continuous_scale='Plasma',
-                labels={'Sayı': 'Sıçrama Sayısı', 'Ay_Adi': 'Ay'}
-            )
-            fig_ay.update_layout(height=400)
-            st.plotly_chart(fig_ay, use_container_width=True)
-            
-            # En yüksek ay
-            max_ay = aylik_df.loc[aylik_df['Sayı'].idxmax()]
-            st.success(f"🌟 En çok sıçrama olan ay: **{max_ay['Ay_Adi']}** ({int(max_ay['Sayı'])} sıçrama)")
-        else:
-            st.warning("Bu eşikte sıçrama verisi yok")
+        # Haftanın günlerine göre dağılım
+        gun_sirasi = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        gun_adlari_tr = ['Pts', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt', 'Paz']
+        
+        haftalik_df = sicramalar.groupby('Gun_Adi').size().reindex(gun_sirasi).reset_index()
+        haftalik_df.columns = ['Gun', 'Sayı']
+        haftalik_df['Gun_TR'] = gun_adlari_tr
+        haftalik_df = haftalik_df.fillna(0)
+        
+        fig_gun = px.bar(
+            haftalik_df,
+            x='Gun_TR',
+            y='Sayı',
+            title='Haftanın Günlerine Göre Sıçrama Sayıları',
+            color='Sayı',
+            color_continuous_scale='Plasma',
+            labels={'Sayı': 'Sıçrama Sayısı', 'Gun_TR': 'Gün'}
+        )
+        fig_gun.update_layout(height=400)
+        st.plotly_chart(fig_gun, use_container_width=True)
     
     with tab3:
-        # Günlük sıçrama trendi
-        if len(sicramalar) > 0:
-            # Yıllara göre sıçrama sayıları
-            yillik_df = sicramalar.groupby('Yil').size().reset_index(name='Sayı')
-            
-            fig_trend = px.line(
-                yillik_df, 
-                x='Yil', 
-                y='Sayı',
-                markers=True,
-                title='Yıllara Göre Günlük Sıçrama Sayıları',
-                labels={'Sayı': 'Sıçrama Sayısı', 'Yil': 'Yıl'}
-            )
-            fig_trend.update_layout(height=400)
-            st.plotly_chart(fig_trend, use_container_width=True)
-            
-            # Kümülatif sıçrama
-            df['Kumulatif_Sicrama'] = df['Sicrama'].cumsum()
-            
-            fig_kum = px.line(
-                df, 
-                x='Tarih', 
-                y='Kumulatif_Sicrama',
-                title='Kümülatif Günlük Sıçrama Sayısı',
-                labels={'Kumulatif_Sicrama': 'Toplam Sıçrama', 'Tarih': 'Tarih'}
-            )
-            fig_kum.update_layout(height=400)
-            st.plotly_chart(fig_kum, use_container_width=True)
-        else:
-            st.warning("Bu eşikte sıçrama verisi yok")
+        # Yıllık trend
+        yillik_df = sicramalar.groupby('Yil').size().reset_index(name='Sayı')
+        
+        fig_yil = px.line(
+            yillik_df,
+            x='Yil',
+            y='Sayı',
+            markers=True,
+            title='Yıllara Göre Günlük Sıçrama Sayıları',
+            labels={'Sayı': 'Sıçrama Sayısı', 'Yil': 'Yıl'}
+        )
+        fig_yil.update_layout(height=400)
+        st.plotly_chart(fig_yil, use_container_width=True)
     
-    # ========== İNDİRME BUTONU ==========
+    # İndirme butonu
     st.markdown("---")
     col1, col2, col3 = st.columns([1, 2, 1])
     
     with col2:
-        if len(sicramalar) > 0:
-            csv = sicramalar.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label=f"📥 GÜNLÜK SIÇRAMA VERİLERİNİ İNDİR ({len(sicramalar)} kayıt)",
-                data=csv,
-                file_name=f'dolar_gunluk_sicrama_{esik}percent_{datetime.now().strftime("%Y%m%d")}.csv',
-                mime='text/csv',
-                use_container_width=True
-            )
+        csv = top_sicramalar.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label=f"📥 EN BÜYÜK {gosterim} SIÇRAMAYI İNDİR (CSV)",
+            data=csv,
+            file_name=f'dolar_top_{gosterim}_sicrama.csv',
+            mime='text/csv',
+            use_container_width=True
+        )
     
     st.balloons()
-    st.success(f"✅ Günlük sıçrama analizi tamamlandı! Toplam {len(df)} gün içinde {toplam_sicrama} sıçrama tespit edildi.")
+    st.success(f"✅ Analiz tamamlandı! {len(df)} günlük veri içinde {len(sicramalar)} sıçrama tespit edildi.")
 
 else:
     # Hoş geldiniz ekranı
     col1, col2, col3 = st.columns([1, 2, 1])
     
     with col2:
-        st.image("https://img.icons8.com/fluency/96/000000/line-chart.png", width=150)
-        
         st.markdown("""
-        <div style="text-align: center; background: white; border-radius: 20px; padding: 2rem; box-shadow: 0 10px 40px rgba(0,0,0,0.1);">
-            <h2 style="color: #2D3748;">📊 Günlük Sıçrama Analizine Hoş Geldiniz</h2>
+        <div style="text-align: center; padding: 3rem;">
+            <img src="https://img.icons8.com/fluency/96/000000/line-chart.png" style="width: 120px;">
+            <h2 style="color: #2d3748; margin-top: 1rem;">Günlük Sıçrama Analizine Hoş Geldiniz</h2>
             <p style="color: #718096; font-size: 1.1rem; margin: 1.5rem 0;">
-                Excel dosyanızı yükleyin, dolar kurundaki <b>günlük sıçramaları</b> 
-                profesyonel grafiklerle keşfedin!
+                Excel dosyanızı yükleyin, dolar kurundaki en büyük günlük sıçramaları 
+                profesyonel grafiklerle keşfedin.
             </p>
         </div>
-        """, unsafe_allow_html=True)
         
-        st.markdown("""
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 2rem;">
-            <div style="background: #EBF4FF; padding: 1rem; border-radius: 10px;">
-                <b>📊 Ayarlanabilir Sıçrama Sayısı</b><br>
-                10, 20, 30, 50, 100 veya tümü
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 2rem 0;">
+            <div style="background: #f7fafc; padding: 1.5rem; border-radius: 10px;">
+                <h4 style="margin: 0 0 0.5rem 0;">📈 Line Grafik</h4>
+                <p style="color: #718096; margin: 0;">Dolar kuru trendi üzerinde en büyük sıçramalar işaretlenir</p>
             </div>
-            <div style="background: #F0FFF4; padding: 1rem; border-radius: 10px;">
-                <b>🎯 Eşik Değeri</b><br>
-                %0.5 ile %10 arası ayarlanabilir
+            <div style="background: #f7fafc; padding: 1.5rem; border-radius: 10px;">
+                <h4 style="margin: 0 0 0.5rem 0;">🎯 Ayarlanabilir</h4>
+                <p style="color: #718096; margin: 0;">10,20,30,40,50 en büyük sıçrama seçeneği</p>
             </div>
-            <div style="background: #FFF5F5; padding: 1rem; border-radius: 10px;">
-                <b>🔄 Yön Filtresi</b><br>
-                Pozitif/Negatif/Tümü
+            <div style="background: #f7fafc; padding: 1.5rem; border-radius: 10px;">
+                <h4 style="margin: 0 0 0.5rem 0;">🧹 NaN Temizleme</h4>
+                <p style="color: #718096; margin: 0;">Boş değerler otomatik temizlenir</p>
             </div>
-            <div style="background: #FFFAF0; padding: 1rem; border-radius: 10px;">
-                <b>📋 Detaylı Tablo</b><br>
-                Filtreleme ve sıralama
+            <div style="background: #f7fafc; padding: 1.5rem; border-radius: 10px;">
+                <h4 style="margin: 0 0 0.5rem 0;">📊 Detaylı Tablo</h4>
+                <p style="color: #718096; margin: 0;">Gün, ay, yıl, gün adı, değişim miktarı</p>
             </div>
         </div>
         
-        <div style="text-align: center; margin-top: 2rem; padding: 1rem; background: #FEEBC8; border-radius: 10px;">
-            <p style="margin: 0; color: #7B341E;">
-                <b>💡 İpucu:</b> Farklı eşik değerleri ve sıçrama sayıları deneyerek 
-                günlük volatiliteyi keşfedin!
+        <div style="background: #ebf8ff; padding: 1rem; border-radius: 10px; text-align: center;">
+            <p style="color: #2c5282; margin: 0;">
+                💡 İpucu: Farklı eşik değerleri ve sıçrama sayıları deneyin!
             </p>
         </div>
         """, unsafe_allow_html=True)
@@ -743,7 +645,7 @@ else:
 # Footer
 st.markdown("---")
 st.markdown("""
-<div style="text-align: center; color: #718096; padding: 1rem;">
-    📊 Dolar Kuru Günlük Sıçrama Analizi | Her gün için detaylı sıçrama analizi
+<div style="text-align: center; color: #a0aec0; padding: 1rem;">
+    Dolar Kuru Günlük Sıçrama Analizi v1.0 | NaN değerler temizlenir | Line grafik odaklı
 </div>
 """, unsafe_allow_html=True)
