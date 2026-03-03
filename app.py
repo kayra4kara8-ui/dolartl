@@ -325,7 +325,7 @@ def veri_isle(raw):
     df['Gun_Adi'] = df['Tarih'].dt.strftime('%A')
     df['Abs_Degisim'] = df['Yuzde_Degisim'].abs()
 
-    # Rolling returns (her gün için)
+    # Rolling returns
     df_indexed = df.set_index('Tarih')
     df['Haftalik_Getiri'] = df_indexed['Dolar_Kuru'].pct_change(5).values * 100
     df['Aylik_Getiri']    = df_indexed['Dolar_Kuru'].pct_change(21).values * 100
@@ -334,23 +334,7 @@ def veri_isle(raw):
     df['Hover_Tarih'] = df.apply(
         lambda r: f"{int(r['Tarih'].day)} {TR_AY_UZUN.get(r['Tarih'].month,'')} {int(r['Tarih'].year)}", axis=1)
 
-    # Gercek haftalik veri: her ISO haftasinin son islem gunu
-    df['ISOYil']   = df['Tarih'].dt.isocalendar().year.astype(int)
-    df['ISOHafta'] = df['Tarih'].dt.isocalendar().week.astype(int)
-    hafta_son = df.groupby(['ISOYil','ISOHafta'])['Tarih'].max().reset_index()
-    hafta_son.columns = ['ISOYil','ISOHafta','HaftaSon']
-    hafta_son = hafta_son.merge(
-        df[['Tarih','Dolar_Kuru','Gun_Adi']].rename(
-            columns={'Tarih':'HaftaSon','Dolar_Kuru':'HaftaKapKur','Gun_Adi':'HaftaGun'}),
-        on='HaftaSon')
-    hafta_son = hafta_son.sort_values('HaftaSon').reset_index(drop=True)
-    hafta_son['HaftaOncekiKur']   = hafta_son['HaftaKapKur'].shift(1)
-    hafta_son['HaftaOncekiTarih'] = hafta_son['HaftaSon'].shift(1)
-    hafta_son['HaftaDegisim']     = (hafta_son['HaftaKapKur'] / hafta_son['HaftaOncekiKur'] - 1) * 100
-    hafta_son['HaftaBaslangic']   = hafta_son['HaftaOncekiTarih'] + pd.Timedelta(days=1)
-    hafta_son = hafta_son.dropna(subset=['HaftaDegisim']).reset_index(drop=True)
-
-    return df, cleaned, hafta_son
+    return df, cleaned
 
 def forward_analysis(df, threshold, periods):
     """After a daily jump >= threshold%, what happens in next N days?"""
@@ -485,7 +469,7 @@ if uploaded_file is None:
 
 with st.spinner("Veriler işleniyor..."):
     try:
-        df, nan_cleaned, hafta_son = veri_isle(uploaded_file.read())
+        df, nan_cleaned = veri_isle(uploaded_file.read())
     except Exception as e:
         st.error(f"Dosya okuma hatası: {e}")
         st.stop()
@@ -598,52 +582,83 @@ with tab1:
                legend=dict(bgcolor='rgba(13,18,32,0.9)', bordercolor='#1e2d4a', orientation='h', yanchor='bottom', y=1.01, xanchor='left', x=0))
     st.plotly_chart(fig1, use_container_width=True)
 
-    # Chart 2: Daily % changes
-    st.markdown('<div class="section-label">◈ Günlük Yüzde Değişimler</div>', unsafe_allow_html=True)
+    # Chart 2: Daily % changes — bar + scatter overlay
+    st.markdown('<div class="section-label">◈ Günlük Değişim</div>', unsafe_allow_html=True)
+
+    # Tüm günler için bar rengi
+    bar_colors = df['Yuzde_Degisim'].apply(
+        lambda x: 'rgba(0,212,170,0.35)' if x >= esik
+                  else 'rgba(255,77,106,0.35)' if x <= -esik
+                  else 'rgba(42,74,122,0.25)'
+    )
+
     fig2 = go.Figure()
-    fig2.add_trace(go.Scatter(
+
+    # Bar: tüm günler, gri/yeşil/kırmızı bantlar
+    fig2.add_trace(go.Bar(
         x=df['Tarih'], y=df['Yuzde_Degisim'],
-        mode='lines', name='Günlük %',
-        line=dict(color='#1e2d4a', width=0.8), opacity=0.7,
-        text=df['Hover_Tarih'],
-        hovertemplate='<b>%{text}</b> — %{y:.3f}%<extra></extra>'
+        name='Günlük Δ',
+        marker_color=bar_colors.values,
+        marker_line_width=0,
+        hovertemplate='%{x|%d.%m.%Y}<br>%{y:.3f}%<extra></extra>',
+        showlegend=False
     ))
+
+    # Pozitif sıçrama noktaları + etiket
     if len(pos_j) > 0:
         esik_val = pos_j['Yuzde_Degisim'].quantile(1 - etiket_quantile / 100)
         pos_j['_lbl'] = pos_j.apply(
-            lambda r: f"{r['Tarih'].strftime('%d.%m.%y')} +{r['Yuzde_Degisim']:.1f}%"
+            lambda r: f"{r['Tarih'].strftime('%d.%m.%y')}\n+{r['Yuzde_Degisim']:.1f}%"
                       if r['Yuzde_Degisim'] >= esik_val else "", axis=1)
         fig2.add_trace(go.Scatter(
             x=pos_j['Tarih'], y=pos_j['Yuzde_Degisim'],
-            mode='markers+text', name='↑ Pozitif',
-            marker=dict(color='#00d4aa', size=8, symbol='triangle-up', line=dict(color='rgba(0,212,170,0.4)', width=2)),
-            text=pos_j['_lbl'], textposition='top right', textfont=dict(size=8, color='#00d4aa', family='DM Mono, monospace'),
-            customdata=pos_j['Yuzde_Degisim'],
-            hovertemplate='%{x|%d.%m.%Y}<br><b>+%{customdata:.3f}%</b><extra></extra>'
+            mode='markers+text', name='↑ Eşik üstü',
+            marker=dict(color='#00d4aa', size=pos_j['Abs_Degisim'] * 1.5 + 4,
+                        symbol='circle', line=dict(color='rgba(0,212,170,0.5)', width=2), opacity=1),
+            text=pos_j['_lbl'],
+            textposition='top center',
+            textfont=dict(size=8, color='#00d4aa', family='DM Mono, monospace'),
+            customdata=list(zip(pos_j['Yuzde_Degisim'], pos_j['Onceki_Kur'], pos_j['Dolar_Kuru'], pos_j['Hover_Tarih'])),
+            hovertemplate='<b>%{customdata[3]}</b><br>%{customdata[1]:.4f} → %{customdata[2]:.4f} ₺<br><b style="color:#00d4aa">+%{customdata[0]:.3f}%</b><extra></extra>'
         ))
     if len(neg_j) > 0:
         esik_val2 = neg_j['Yuzde_Degisim'].quantile(etiket_quantile / 100)
         neg_j['_lbl'] = neg_j.apply(
-            lambda r: f"{r['Tarih'].strftime('%d.%m.%y')} {r['Yuzde_Degisim']:.1f}%"
+            lambda r: f"{r['Tarih'].strftime('%d.%m.%y')}\n{r['Yuzde_Degisim']:.1f}%"
                       if r['Yuzde_Degisim'] <= esik_val2 else "", axis=1)
         fig2.add_trace(go.Scatter(
             x=neg_j['Tarih'], y=neg_j['Yuzde_Degisim'],
-            mode='markers+text', name='↓ Negatif',
-            marker=dict(color='#ff4d6a', size=8, symbol='triangle-down', line=dict(color='rgba(255,77,106,0.4)', width=2)),
-            text=neg_j['_lbl'], textposition='bottom right', textfont=dict(size=8, color='#ff4d6a', family='DM Mono, monospace'),
-            customdata=neg_j['Yuzde_Degisim'],
-            hovertemplate='%{x|%d.%m.%Y}<br><b>%{customdata:.3f}%</b><extra></extra>'
+            mode='markers+text', name='↓ Eşik altı',
+            marker=dict(color='#ff4d6a', size=neg_j['Abs_Degisim'] * 1.5 + 4,
+                        symbol='circle', line=dict(color='rgba(255,77,106,0.5)', width=2), opacity=1),
+            text=neg_j['_lbl'],
+            textposition='bottom center',
+            textfont=dict(size=8, color='#ff4d6a', family='DM Mono, monospace'),
+            customdata=list(zip(neg_j['Yuzde_Degisim'], neg_j['Onceki_Kur'], neg_j['Dolar_Kuru'], neg_j['Hover_Tarih'])),
+            hovertemplate='<b>%{customdata[3]}</b><br>%{customdata[1]:.4f} → %{customdata[2]:.4f} ₺<br><b style="color:#ff4d6a">%{customdata[0]:.3f}%</b><extra></extra>'
         ))
-    fig2.add_hline(y=esik, line_dash="dash", line_color='rgba(0,212,170,0.4)', line_width=1,
-                   annotation_text=f"+{esik}%", annotation_font_color='#00d4aa', annotation_font_size=10)
-    fig2.add_hline(y=-esik, line_dash="dash", line_color='rgba(255,77,106,0.4)', line_width=1,
-                   annotation_text=f"-{esik}%", annotation_font_color='#ff4d6a', annotation_font_size=10)
-    fig2.add_hline(y=0, line_color='#1e2d4a', line_width=1)
-    apply_base(fig2, height=480,
-               title=dict(text=f"GÜNLÜK DEĞİŞİM DAĞILIMI  ·  Eşik %{esik}", font=dict(size=12, color='#4a6080', family='DM Mono, monospace'), x=0),
-               xaxis=dict(gridcolor='#131c2e', tickformat='%b %Y', tickfont=dict(size=10, color='#4a6080')),
-               yaxis=dict(gridcolor='#131c2e', ticksuffix='%', tickfont=dict(size=10, color='#4a6080')),
-               hovermode='closest')
+
+    fig2.add_hline(y=esik,  line_dash="dot", line_color='rgba(0,212,170,0.6)',  line_width=1.5,
+                   annotation_text=f"+{esik}%", annotation_font_color='#00d4aa', annotation_font_size=10,
+                   annotation_position="top right")
+    fig2.add_hline(y=-esik, line_dash="dot", line_color='rgba(255,77,106,0.6)', line_width=1.5,
+                   annotation_text=f"−{esik}%", annotation_font_color='#ff4d6a', annotation_font_size=10,
+                   annotation_position="bottom right")
+    fig2.add_hline(y=0, line_color='#2a4a7a', line_width=1)
+
+    apply_base(fig2, height=500,
+               title=dict(text=f"GÜNLÜK DEĞİŞİM  ·  Eşik ±%{esik}  ·  Etiket top %{etiket_quantile}",
+                          font=dict(size=11, color='#4a6080', family='DM Mono, monospace'), x=0),
+               xaxis=dict(gridcolor='#0d1220', tickformat='%Y', dtick='M12',
+                          tickfont=dict(size=10, color='#4a6080'),
+                          showspikes=True, spikecolor='#2a4a7a', spikethickness=1, spikedash='dot',
+                          rangeslider=dict(visible=True, bgcolor='#0d1220', bordercolor='#1e2d4a', thickness=0.06)),
+               yaxis=dict(gridcolor='#131c2e', ticksuffix='%', tickfont=dict(size=10, color='#4a6080'),
+                          zeroline=False, fixedrange=False),
+               bargap=0.1,
+               hovermode='x unified',
+               legend=dict(bgcolor='rgba(13,18,32,0.9)', bordercolor='#1e2d4a',
+                           orientation='h', yanchor='bottom', y=1.01, xanchor='left', x=0))
     st.plotly_chart(fig2, use_container_width=True)
 
     # Top 10 cards
@@ -778,10 +793,9 @@ with tab2:
                xaxis=dict(gridcolor='#0d1220'))
     st.plotly_chart(fig_vio, use_container_width=True)
 
-    # ── Haftalık getiri: Pazartesi açılışından Cuma kapanışına (hafta bazlı, tek nokta/hafta)
-    st.markdown('<div class="section-label">◈ Haftalık Getiri — Pazartesi → Cuma</div>', unsafe_allow_html=True)
+    # ── Haftalık değişim: Pazartesi → Cuma, haftada bir bar
+    st.markdown('<div class="section-label">◈ Haftalık Değişim — Pazartesi → Cuma</div>', unsafe_allow_html=True)
 
-    # Her haftanın ilk (Pzt) ve son (Cum) işlem günü
     df['ISOYil']   = df['Tarih'].dt.isocalendar().year.astype(int)
     df['ISOHafta'] = df['Tarih'].dt.isocalendar().week.astype(int)
 
@@ -792,10 +806,9 @@ with tab2:
         CumTarih=('Tarih','max'), CumKur=('Dolar_Kuru','last')
     ).reset_index()
     hf = hf_ilk.merge(hf_son, on=['ISOYil','ISOHafta'])
-    hf['HaftaDegisim'] = (hf['CumKur'] / hf['PztKur'] - 1) * 100
-    # x ekseni = haftanın Cuma tarihi (görsel hizalama için)
-    hf['XTarih'] = hf['CumTarih']
-    hf['Etiket_Aralik'] = hf['PztTarih'].dt.strftime('%d.%m') + '–' + hf['CumTarih'].dt.strftime('%d.%m.%y')
+    hf['HaftaDegisim']   = (hf['CumKur'] / hf['PztKur'] - 1) * 100
+    hf['XTarih']         = hf['CumTarih']
+    hf['Etiket_Aralik']  = hf['PztTarih'].dt.strftime('%d.%m') + '–' + hf['CumTarih'].dt.strftime('%d.%m.%y')
     hf = hf.dropna(subset=['HaftaDegisim']).reset_index(drop=True)
 
     # Yön filtresi
@@ -809,7 +822,6 @@ with tab2:
     hf_pos_sc = hf_sic[hf_sic['HaftaDegisim'] > 0].copy()
     hf_neg_sc = hf_sic[hf_sic['HaftaDegisim'] < 0].copy()
 
-    # Etiket: sadece en büyük dilim — format "dd.mm–dd.mm.yy  +X.X%"
     def hf_lbl(sub, is_pos):
         sub = sub.copy()
         if len(sub) == 0:
@@ -818,83 +830,89 @@ with tab2:
         if is_pos:
             thr = sub['HaftaDegisim'].quantile(1 - haftalik_etiket / 100)
             sub['_lbl'] = sub.apply(
-                lambda r: f"{r['Etiket_Aralik']}  +{r['HaftaDegisim']:.1f}%"
+                lambda r: f"{r['Etiket_Aralik']}\n+{r['HaftaDegisim']:.1f}%"
                           if r['HaftaDegisim'] >= thr else "", axis=1)
         else:
             thr = sub['HaftaDegisim'].quantile(haftalik_etiket / 100)
             sub['_lbl'] = sub.apply(
-                lambda r: f"{r['Etiket_Aralik']}  {r['HaftaDegisim']:.1f}%"
+                lambda r: f"{r['Etiket_Aralik']}\n{r['HaftaDegisim']:.1f}%"
                           if r['HaftaDegisim'] <= thr else "", axis=1)
         return sub
 
     hf_pos_sc = hf_lbl(hf_pos_sc, True)
     hf_neg_sc = hf_lbl(hf_neg_sc, False)
 
+    # Bar renkleri
+    hf_bar_colors = hf['HaftaDegisim'].apply(
+        lambda x: 'rgba(0,212,170,0.40)' if x >= haftalik_esik
+                  else 'rgba(255,77,106,0.40)' if x <= -haftalik_esik
+                  else 'rgba(42,74,122,0.22)'
+    )
+
     fig_hw = go.Figure()
 
-    # Arka plan çizgisi — tüm haftalar
-    fig_hw.add_trace(go.Scatter(
+    # Bar: tüm haftalar
+    fig_hw.add_trace(go.Bar(
         x=hf['XTarih'], y=hf['HaftaDegisim'],
-        mode='lines', name='Haftalık Δ',
-        line=dict(color='#2a4a7a', width=1.2), opacity=0.5,
-        customdata=list(zip(hf['Etiket_Aralik'], hf['PztKur'], hf['CumKur'])),
-        hovertemplate='<b>%{customdata[0]}</b><br>Pzt: %{customdata[1]:.4f} ₺  →  Cum: %{customdata[2]:.4f} ₺<br>Değişim: %{y:.3f}%<extra></extra>'
+        name='Haftalık Δ',
+        marker_color=hf_bar_colors.values,
+        marker_line_width=0,
+        customdata=list(zip(hf['Etiket_Aralik'], hf['PztKur'], hf['CumKur'], hf['HaftaDegisim'])),
+        hovertemplate='<b>%{customdata[0]}</b><br>Pzt: %{customdata[1]:.4f} ₺  →  Cum: %{customdata[2]:.4f} ₺<br><b>%{customdata[3]:.3f}%</b><extra></extra>',
+        showlegend=False
     ))
 
-    # Pozitif sıçramalar
+    # Pozitif sıçrama noktaları
     if len(hf_pos_sc) > 0:
         fig_hw.add_trace(go.Scatter(
             x=hf_pos_sc['XTarih'], y=hf_pos_sc['HaftaDegisim'],
-            mode='markers+text', name='↑ Pozitif',
-            marker=dict(
-                color='#00d4aa',
-                size=hf_pos_sc['HaftaDegisim'].abs() * 2 + 5,
-                symbol='triangle-up',
-                line=dict(color='rgba(0,212,170,0.3)', width=3), opacity=0.9
-            ),
+            mode='markers+text', name='↑ Eşik üstü',
+            marker=dict(color='#00d4aa',
+                        size=hf_pos_sc['HaftaDegisim'].abs() * 1.8 + 6,
+                        symbol='circle',
+                        line=dict(color='rgba(0,212,170,0.5)', width=2), opacity=1),
             text=hf_pos_sc['_lbl'],
-            textposition='top right',
+            textposition='top center',
             textfont=dict(size=8, color='#00d4aa', family='DM Mono, monospace'),
             customdata=list(zip(hf_pos_sc['Etiket_Aralik'], hf_pos_sc['PztKur'], hf_pos_sc['CumKur'], hf_pos_sc['HaftaDegisim'])),
             hovertemplate='<b>%{customdata[0]}</b><br>Pzt: %{customdata[1]:.4f} ₺  →  Cum: %{customdata[2]:.4f} ₺<br><b style="color:#00d4aa">+%{customdata[3]:.3f}%</b><extra></extra>'
         ))
 
-    # Negatif sıçramalar
+    # Negatif sıçrama noktaları
     if len(hf_neg_sc) > 0:
         fig_hw.add_trace(go.Scatter(
             x=hf_neg_sc['XTarih'], y=hf_neg_sc['HaftaDegisim'],
-            mode='markers+text', name='↓ Negatif',
-            marker=dict(
-                color='#ff4d6a',
-                size=hf_neg_sc['HaftaDegisim'].abs() * 2 + 5,
-                symbol='triangle-down',
-                line=dict(color='rgba(255,77,106,0.3)', width=3), opacity=0.9
-            ),
+            mode='markers+text', name='↓ Eşik altı',
+            marker=dict(color='#ff4d6a',
+                        size=hf_neg_sc['HaftaDegisim'].abs() * 1.8 + 6,
+                        symbol='circle',
+                        line=dict(color='rgba(255,77,106,0.5)', width=2), opacity=1),
             text=hf_neg_sc['_lbl'],
-            textposition='bottom right',
+            textposition='bottom center',
             textfont=dict(size=8, color='#ff4d6a', family='DM Mono, monospace'),
             customdata=list(zip(hf_neg_sc['Etiket_Aralik'], hf_neg_sc['PztKur'], hf_neg_sc['CumKur'], hf_neg_sc['HaftaDegisim'])),
             hovertemplate='<b>%{customdata[0]}</b><br>Pzt: %{customdata[1]:.4f} ₺  →  Cum: %{customdata[2]:.4f} ₺<br><b style="color:#ff4d6a">%{customdata[3]:.3f}%</b><extra></extra>'
         ))
 
-    fig_hw.add_hline(y=haftalik_esik, line_dash="dash",
-                     line_color='rgba(0,212,170,0.45)', line_width=1,
-                     annotation_text=f"+{haftalik_esik}%",
-                     annotation_font_color='#00d4aa', annotation_font_size=9)
-    fig_hw.add_hline(y=-haftalik_esik, line_dash="dash",
-                     line_color='rgba(255,77,106,0.45)', line_width=1,
-                     annotation_text=f"-{haftalik_esik}%",
-                     annotation_font_color='#ff4d6a', annotation_font_size=9)
-    fig_hw.add_hline(y=0, line_color='#1e2d4a', line_width=1)
+    fig_hw.add_hline(y=haftalik_esik,  line_dash="dot", line_color='rgba(0,212,170,0.6)',  line_width=1.5,
+                     annotation_text=f"+{haftalik_esik}%", annotation_font_color='#00d4aa', annotation_font_size=10,
+                     annotation_position="top right")
+    fig_hw.add_hline(y=-haftalik_esik, line_dash="dot", line_color='rgba(255,77,106,0.6)', line_width=1.5,
+                     annotation_text=f"−{haftalik_esik}%", annotation_font_color='#ff4d6a', annotation_font_size=10,
+                     annotation_position="bottom right")
+    fig_hw.add_hline(y=0, line_color='#2a4a7a', line_width=1)
 
-    apply_base(fig_hw, height=540,
+    apply_base(fig_hw, height=520,
                title=dict(text=f"HAFTALIK DEĞİŞİM (Pzt→Cum)  ·  Eşik ±%{haftalik_esik}  ·  Etiket top %{haftalik_etiket}",
                           font=dict(size=11, color='#4a6080', family='DM Mono, monospace'), x=0),
-               yaxis=dict(gridcolor='#131c2e', ticksuffix='%',
-                          showspikes=True, spikecolor='#2a4a7a', spikethickness=1, spikedash='dot'),
-               xaxis=dict(gridcolor='#131c2e', tickformat='%b %Y',
-                          showspikes=True, spikecolor='#2a4a7a', spikethickness=1, spikedash='dot'),
-               hovermode='closest',
+               xaxis=dict(gridcolor='#0d1220', tickformat='%Y', dtick='M12',
+                          tickfont=dict(size=10, color='#4a6080'),
+                          showspikes=True, spikecolor='#2a4a7a', spikethickness=1, spikedash='dot',
+                          rangeslider=dict(visible=True, bgcolor='#0d1220', bordercolor='#1e2d4a', thickness=0.06)),
+               yaxis=dict(gridcolor='#131c2e', ticksuffix='%', tickfont=dict(size=10, color='#4a6080'),
+                          zeroline=False, fixedrange=False),
+               bargap=0.15,
+               hovermode='x unified',
                legend=dict(bgcolor='rgba(13,18,32,0.9)', bordercolor='#1e2d4a',
                            orientation='h', yanchor='bottom', y=1.01, xanchor='left', x=0))
     st.plotly_chart(fig_hw, use_container_width=True)
@@ -919,7 +937,7 @@ with tab2:
         <div class="metric-sub">pozitif büyük hafta</div>
       </div>
       <div class="metric-card" style="border-top:2px solid #ff4d6a;">
-        <div class="metric-label">≤ -%{haftalik_esik} hafta</div>
+        <div class="metric-label">≤ −%{haftalik_esik} hafta</div>
         <div class="metric-value metric-neg">{hf_neg_n}</div>
         <div class="metric-sub">negatif büyük hafta</div>
       </div>
