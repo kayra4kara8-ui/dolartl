@@ -276,6 +276,22 @@ TR_AY_UZUN = {1:'Ocak',2:'Şubat',3:'Mart',4:'Nisan',5:'Mayıs',6:'Haziran',
 TR_GUN = {'Monday':'Pazartesi','Tuesday':'Salı','Wednesday':'Çarşamba',
           'Thursday':'Perşembe','Friday':'Cuma','Saturday':'Cumartesi','Sunday':'Pazar'}
 
+def fkur(v, decimals=4):
+    """Kur değerini Türkçe formatında virgülle göster: 5,2704"""
+    try:
+        return f"{float(v):.{decimals}f}".replace('.', ',')
+    except:
+        return str(v)
+
+def fpct(v, decimals=3, sign=False):
+    """Yüzde değerini Türkçe formatında virgülle göster: +3,142%"""
+    try:
+        s = "+" if sign and float(v) >= 0 else ""
+        return f"{s}{float(v):.{decimals}f}".replace('.', ',') + "%"
+    except:
+        return str(v)
+
+
 PLOTLY_BASE = dict(
     paper_bgcolor='rgba(0,0,0,0)',
     plot_bgcolor='rgba(13,18,32,0.9)',
@@ -308,6 +324,12 @@ def veri_isle(raw):
     df['Tarih'] = pd.to_datetime(df['Tarih'], format='%d-%m-%Y', errors='coerce')
     df = df.dropna(subset=['Tarih'])
     df = df.sort_values('Tarih').reset_index(drop=True)
+    df['Dolar_Kuru'] = (
+        df['Dolar_Kuru']
+        .astype(str)
+        .str.replace(',', '.', regex=False)
+        .str.strip()
+    )
     df['Dolar_Kuru'] = pd.to_numeric(df['Dolar_Kuru'], errors='coerce')
     df = df.dropna(subset=['Dolar_Kuru'])
 
@@ -508,8 +530,8 @@ st.markdown(f"""
   </div>
   <div class="metric-card">
     <div class="metric-label">Ort. Günlük Değ.</div>
-    <div class="metric-value">%{df['Yuzde_Degisim'].mean():.3f}</div>
-    <div class="metric-sub">std ± {df['Yuzde_Degisim'].std():.3f}%</div>
+    <div class="metric-value">%{fpct(df['Yuzde_Degisim'].mean(), 3)}</div>
+    <div class="metric-sub">std ± {fpct(df['Yuzde_Degisim'].std(), 3)}</div>
   </div>
   <div class="metric-card">
     <div class="metric-label">Pozitif / Negatif</div>
@@ -519,12 +541,12 @@ st.markdown(f"""
   <div class="metric-card">
     <div class="metric-label">Toplam Sıçrama (≥%{esik})</div>
     <div class="metric-value metric-neu">{len(sicramalar):,}</div>
-    <div class="metric-sub">günlerin %{oran:.1f}'i</div>
+    <div class="metric-sub">günlerin %{fpct(oran, 1)}'i</div>
   </div>
   <div class="metric-card">
     <div class="metric-label">En Büyük / En Küçük</div>
-    <div class="metric-value"><span class="metric-pos">+{max_j:.2f}%</span></div>
-    <div class="metric-sub"><span class="metric-neg">{min_j:.2f}%</span></div>
+    <div class="metric-value"><span class="metric-pos">+{fpct(max_j, 2)}</span></div>
+    <div class="metric-sub"><span class="metric-neg">{fpct(min_j, 2)}</span></div>
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -684,9 +706,9 @@ with tab1:
                 <div class="jump-card {card_cls}">
                   <div class="jump-rank">#{global_rank} {icon}</div>
                   <div class="jump-date">{r['Tarih'].strftime('%d.%m.%Y')}</div>
-                  <div class="jump-pct {pct_cls}">{sign}{r['Yuzde_Degisim']:.2f}%</div>
+                  <div class="jump-pct {pct_cls}">{sign}{f"{r['Yuzde_Degisim']:.2f}".replace('.',',')}%</div>
                   <div class="jump-meta">{TR_GUN.get(r['Gun_Adi'], r['Gun_Adi'])}</div>
-                  <div class="jump-meta">{r['Onceki_Kur']:.4f} → {r['Dolar_Kuru']:.4f} ₺</div>
+                  <div class="jump-meta">{fkur(r['Onceki_Kur'])} → {fkur(r['Dolar_Kuru'])} ₺</div>
                   <div class="jump-meta">+{int(r['Gun_Farki'])} gün arayla</div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -763,12 +785,12 @@ with tab2:
             st.markdown(f"""
             <div class="metric-card" style="border-top: 2px solid {color};">
               <div class="metric-label" style="color:{color};">{gun_tr}</div>
-              <div class="metric-value {ort_cls}">{sign}{ort:.3f}%</div>
+              <div class="metric-value {ort_cls}">{sign}{f'{ort:.3f}'.replace('.',',')}%</div>
               <div class="metric-sub">Ort. günlük değişim</div>
               <div style="margin-top:10px; font-size:0.72rem; color:#3a5070; font-family:'DM Mono',monospace; line-height:1.8;">
-                <span style="color:#4a6080">Std:</span> <span style="color:{color}">±{std:.3f}%</span><br>
-                <span style="color:#4a6080">Max:</span> <span style="color:#00d4aa">+{maks:.2f}%</span><br>
-                <span style="color:#4a6080">Min:</span> <span style="color:#ff4d6a">{mins:.2f}%</span><br>
+                <span style="color:#4a6080">Std:</span> <span style="color:{color}">±{f'{std:.3f}'.replace('.',',')}%</span><br>
+                <span style="color:#4a6080">Max:</span> <span style="color:#00d4aa">+{f'{maks:.2f}'.replace('.',',')}%</span><br>
+                <span style="color:#4a6080">Min:</span> <span style="color:#ff4d6a">{f'{mins:.2f}'.replace('.',',')}%</span><br>
                 <span style="color:#4a6080">Poz. oran:</span> <span style="color:{color}">%{poz:.0f}</span>
               </div>
             </div>
@@ -900,7 +922,7 @@ with tab2:
     <div class="metric-row" style="grid-template-columns: repeat(5, 1fr);">
       <div class="metric-card" style="border-top:2px solid #4a9eff;">
         <div class="metric-label">Haftalık Ort.</div>
-        <div class="metric-value metric-{'pos' if hf_ort>=0 else 'neg'}">{sign_hf}{hf_ort:.3f}%</div>
+        <div class="metric-value metric-{'pos' if hf_ort>=0 else 'neg'}">{sign_hf}{f'{hf_ort:.3f}'.replace('.',',') }%</div>
         <div class="metric-sub">Pzt→Cum ort.</div>
       </div>
       <div class="metric-card" style="border-top:2px solid #00d4aa;">
@@ -915,11 +937,11 @@ with tab2:
       </div>
       <div class="metric-card">
         <div class="metric-label">En İyi Hafta</div>
-        <div class="metric-value metric-pos">+{hf_maks:.2f}%</div>
+        <div class="metric-value metric-pos">+{f'{hf_maks:.2f}'.replace('.',',')}%</div>
       </div>
       <div class="metric-card">
         <div class="metric-label">En Kötü Hafta</div>
-        <div class="metric-value metric-neg">{hf_mins:.2f}%</div>
+        <div class="metric-value metric-neg">{f'{hf_mins:.2f}'.replace('.',',')}%</div>
       </div>
     </div>
     """, unsafe_allow_html=True)
@@ -931,24 +953,24 @@ with tab2:
     hf_tablo = hf[['PztTarih','CumTarih','PztKur','CumKur','HaftaDegisim']].copy()
     hf_tablo['Hafta'] = hf_tablo['PztTarih'].dt.strftime('%d.%m.%Y') + ' – ' + hf_tablo['CumTarih'].dt.strftime('%d.%m.%Y')
     hf_tablo['Yıl']   = hf_tablo['PztTarih'].dt.year
-    hf_tablo['Pzt Kur'] = hf_tablo['PztKur'].round(4)
-    hf_tablo['Cum Kur'] = hf_tablo['CumKur'].round(4)
-    hf_tablo['Değişim %'] = hf_tablo['HaftaDegisim'].round(3)
-    hf_tablo['Yön'] = hf_tablo['Değişim %'].apply(lambda x: '↑' if x > 0 else '↓')
+    hf_tablo['Pzt Kur']   = hf_tablo['PztKur'].apply(lambda x: f"{x:.4f}".replace('.',','))
+    hf_tablo['Cum Kur']   = hf_tablo['CumKur'].apply(lambda x: f"{x:.4f}".replace('.',','))
+    hf_tablo['Değişim %'] = hf_tablo['HaftaDegisim'].apply(lambda x: ("+" if x>=0 else "") + f"{x:.3f}".replace('.',',') + "%")
+    hf_tablo['Yön']       = hf_tablo['HaftaDegisim'].apply(lambda x: '↑' if x > 0 else '↓')
     hf_tablo = hf_tablo[['Yıl','Hafta','Pzt Kur','Cum Kur','Değişim %','Yön']].sort_values('Hafta', ascending=False).reset_index(drop=True)
 
     def color_row(val):
-        if isinstance(val, float):
-            if val > 0:
-                return 'color: #00d4aa'
-            elif val < 0:
-                return 'color: #ff4d6a'
+        if isinstance(val, str) and val.endswith('%'):
+            try:
+                num = float(val.replace(',','.').replace('%','').replace('+',''))
+                return 'color: #00d4aa' if num > 0 else ('color: #ff4d6a' if num < 0 else '')
+            except:
+                pass
         return ''
 
     styled = (
         hf_tablo.style
         .applymap(color_row, subset=['Değişim %'])
-        .format({'Pzt Kur': '{:.4f}', 'Cum Kur': '{:.4f}', 'Değişim %': '{:+.3f}%'})
         .set_properties(**{
             'background-color': '#0d1220',
             'color': '#8aa0bf',
@@ -1060,11 +1082,11 @@ with tab3:
                 cards_html += f"""
                 <div class="forward-card">
                   <div class="forward-title">{period_labels[p]} Sonra</div>
-                  <div class="forward-big {mean_cls}">{sign}{r['mean']:.2f}%</div>
+                  <div class="forward-big {mean_cls}">{sign}{f"{r['mean']:.2f}".replace('.',',')}%</div>
                   <div class="forward-detail">
-                    <span style="color:#4a6080">Medyan:</span> <span class="forward-accent">{'+' if r['median']>=0 else ''}{r['median']:.2f}%</span><br>
+                    <span style="color:#4a6080">Medyan:</span> <span class="forward-accent">{'+' if r['median']>=0 else ''}{f"{r['median']:.2f}".replace('.',',')}%</span><br>
                     <span style="color:#4a6080">Pozitif oran:</span> <span class="forward-accent">%{r['pos_pct']:.0f}</span><br>
-                    <span style="color:#4a6080">IQR:</span> <span class="forward-accent">{r['p25']:.2f}% — {r['p75']:.2f}%</span><br>
+                    <span style="color:#4a6080">IQR:</span> <span class="forward-accent">{f"{r['p25']:.2f}".replace('.',',')}% — {f"{r['p75']:.2f}".replace('.',',')}%</span><br>
                     <span style="color:#4a6080">Örnek sayısı:</span> <span class="forward-accent">{r['n']}</span>
                   </div>
                 </div>"""
@@ -1265,10 +1287,10 @@ with tab5:
         'Yıl':         tbl['Yil'],
         'Ay':          tbl['Ay_Adi'],
         'Gün Adı':     tbl['Gun_Adi'],
-        'Kur':         tbl['Dolar_Kuru'].round(4),
-        'Önceki Kur':  tbl['Onceki_Kur'].round(4),
-        'Değişim %':   tbl['Yuzde_Degisim'].round(3),
-        'TL Δ':        tbl['TL_Degisim'].round(4),
+        'Kur':         tbl['Dolar_Kuru'].apply(lambda x: f"{x:.4f}".replace('.',',')),
+        'Önceki Kur':  tbl['Onceki_Kur'].apply(lambda x: f"{x:.4f}".replace('.',',')),
+        'Değişim %':   tbl['Yuzde_Degisim'].apply(lambda x: ("+" if x>=0 else "") + f"{x:.3f}".replace('.',',') + "%"),
+        'TL Δ':        tbl['TL_Degisim'].apply(lambda x: f"{x:.4f}".replace('.',',')),
         'Gün Farkı':   tbl['Gun_Farki'].astype(int),
     })
     st.dataframe(tbl_show, use_container_width=True, height=420)
@@ -1296,10 +1318,10 @@ with tab5:
     hf_t = hf_global[['PztTarih','CumTarih','PztKur','CumKur','HaftaDegisim']].copy()
     hf_t.insert(0, 'Hafta', hf_t['PztTarih'].dt.strftime('%d.%m.%Y') + ' – ' + hf_t['CumTarih'].dt.strftime('%d.%m.%Y'))
     hf_t.insert(0, 'Yıl', hf_t['PztTarih'].dt.year)
-    hf_t['Pzt Kur'] = hf_t['PztKur'].round(4)
-    hf_t['Cum Kur'] = hf_t['CumKur'].round(4)
-    hf_t['Değişim %'] = hf_t['HaftaDegisim'].round(3)
-    hf_t['Yön'] = hf_t['Değişim %'].apply(lambda x: '↑' if x > 0 else '↓')
+    hf_t['Pzt Kur']   = hf_t['PztKur'].apply(lambda x: f"{x:.4f}".replace('.',','))
+    hf_t['Cum Kur']   = hf_t['CumKur'].apply(lambda x: f"{x:.4f}".replace('.',','))
+    hf_t['Değişim %'] = hf_t['HaftaDegisim'].apply(lambda x: ("+" if x>=0 else "") + f"{x:.3f}".replace('.',',') + "%")
+    hf_t['Yön']       = hf_t['HaftaDegisim'].apply(lambda x: '↑' if x > 0 else '↓')
     hf_t = hf_t[['Yıl','Hafta','Pzt Kur','Cum Kur','Değişim %','Yön']].sort_values('Hafta', ascending=False).reset_index(drop=True)
     hf_t.index = hf_t.index + 1
     st.dataframe(hf_t, use_container_width=True, height=420)
@@ -1329,4 +1351,3 @@ st.markdown("""
     USDTRY ANALYSIS PLATFORM · STREAMLIT + PLOTLY
 </div>
 """, unsafe_allow_html=True)
-
