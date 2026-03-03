@@ -48,11 +48,11 @@ GUN_RENKLERI = {
     'Cuma': Theme.ACCENT_RED
 }
 
-# Plotly Tema Konfigürasyonu
+# Plotly Tema Konfigürasyonu - PNG için optimize edildi
 PLOTLY_BASE = {
     'paper_bgcolor': 'rgba(0,0,0,0)',
     'plot_bgcolor': 'rgba(13,18,32,0.9)',
-    'font': {'color': Theme.TEXT_SECONDARY, 'family': 'DM Sans, sans-serif'},
+    'font': {'color': Theme.TEXT_SECONDARY, 'family': 'DM Sans, sans-serif', 'size': 12},
     'hoverlabel': {
         'bgcolor': Theme.BG_SECONDARY,
         'font_size': 12,
@@ -62,18 +62,17 @@ PLOTLY_BASE = {
     'xaxis': {
         'gridcolor': '#131c2e',
         'gridwidth': 1,
-        'tickfont': {'size': 10, 'color': Theme.TEXT_MUTED},
+        'tickfont': {'size': 11, 'color': Theme.TEXT_MUTED},
         'zeroline': False,
-        'showspikes': True,
-        'spikecolor': Theme.BORDER,
-        'spikethickness': 1,
-        'spikedash': 'dot'
+        'showspikes': False,  # PNG'de spike gerekmez
+        'title_font': {'size': 12, 'color': Theme.TEXT_MUTED}
     },
     'yaxis': {
         'gridcolor': '#131c2e',
         'gridwidth': 1,
-        'tickfont': {'size': 10, 'color': Theme.TEXT_MUTED},
-        'zeroline': False
+        'tickfont': {'size': 11, 'color': Theme.TEXT_MUTED},
+        'zeroline': False,
+        'title_font': {'size': 12, 'color': Theme.TEXT_MUTED}
     },
     'legend': {
         'bgcolor': 'rgba(13,18,32,0.8)',
@@ -86,7 +85,10 @@ PLOTLY_BASE = {
         'xanchor': 'left',
         'x': 0
     },
-    'margin': {'l': 50, 'r': 20, 't': 60, 'b': 40}
+    'margin': {'l': 60, 'r': 30, 't': 70, 'b': 50},
+    'title': {
+        'font': {'size': 14, 'color': Theme.TEXT_MUTED, 'family': 'DM Mono, monospace'}
+    }
 }
 
 # =============================================================================
@@ -165,7 +167,7 @@ def safe_ticks(vmin: float, vmax: float, n: int = 8, decimals: int = 2,
         return None, None
 
 def apply_base(fig: go.Figure, **kwargs) -> go.Figure:
-    """Plotly grafiğine base temayı uygular."""
+    """Plotly grafiğine base temayı uygular - PNG için optimize edildi."""
     cfg = {**PLOTLY_BASE, **kwargs}
     
     # Özel yapılandırmaları birleştir
@@ -176,6 +178,14 @@ def apply_base(fig: go.Figure, **kwargs) -> go.Figure:
                 cfg[k] = {**base_val, **kwargs[k]}
     
     fig.update_layout(**cfg)
+    
+    # PNG çıktısı için image export ayarları
+    fig.update_layout(
+        width=None,
+        height=None,
+        autosize=True
+    )
+    
     return fig
 
 def create_section_header(title: str, icon: str = "◈") -> None:
@@ -251,11 +261,11 @@ def veri_isle(raw_data: bytes) -> Tuple[pd.DataFrame, int]:
         axis=1
     )
     
-    # Periyodik getiriler
+    # Periyodik değişimler (getiri yerine değişim)
     df_idx = df.set_index('Tarih')
-    df['Haftalik_Getiri'] = df_idx['Dolar_Kuru'].pct_change(5).values * 100
-    df['Aylik_Getiri'] = df_idx['Dolar_Kuru'].pct_change(21).values * 100
-    df['3Ay_Getiri'] = df_idx['Dolar_Kuru'].pct_change(63).values * 100
+    df['Haftalik_Degisim'] = df_idx['Dolar_Kuru'].pct_change(5).values * 100
+    df['Aylik_Degisim'] = df_idx['Dolar_Kuru'].pct_change(21).values * 100
+    df['3Ay_Degisim'] = df_idx['Dolar_Kuru'].pct_change(63).values * 100
     
     # Volatilite
     df['Vol_20'] = df['Yuzde_Degisim'].rolling(20).std()
@@ -271,7 +281,7 @@ def veri_isle(raw_data: bytes) -> Tuple[pd.DataFrame, int]:
 @st.cache_data
 def forward_analysis(df: pd.DataFrame, threshold: float, periods: List[int]) -> Dict[int, Dict]:
     """
-    Büyük sıçramalar sonrası ileri dönem getirilerini analiz eder.
+    Büyük sıçramalar sonrası ileri dönem değişimlerini analiz eder.
     
     Args:
         df: İşlenmiş veri DataFrame'i
@@ -363,6 +373,19 @@ def inject_custom_css() -> None:
     
     section[data-testid="stSidebar"] * {{
         color: {Theme.TEXT_SECONDARY};
+    }}
+    
+    /* Radio butonları yan yana */
+    div.row-widget.stRadio > div {{
+        flex-direction: row;
+        align-items: center;
+        gap: 20px;
+    }}
+    
+    div.row-widget.stRadio > div label {{
+        margin-bottom: 0;
+        color: {Theme.TEXT_MUTED};
+        font-size: 0.85rem;
     }}
     
     /* Butonlar */
@@ -741,7 +764,7 @@ def render_jump_cards(sicramalar: pd.DataFrame) -> None:
 # =============================================================================
 def create_price_chart(df: pd.DataFrame, pos_j: pd.DataFrame, neg_j: pd.DataFrame, 
                        esik: float, gosterim_sec: Any) -> go.Figure:
-    """Fiyat grafiğini oluşturur."""
+    """Fiyat grafiğini oluşturur - PNG uyumlu."""
     fig = go.Figure()
     
     # Ana fiyat serisi
@@ -756,30 +779,49 @@ def create_price_chart(df: pd.DataFrame, pos_j: pd.DataFrame, neg_j: pd.DataFram
     ))
     
     # Pozitif sıçramalar
-    for subset, color, name in [(pos_j, Theme.ACCENT_GREEN, '↑ Pozitif'), 
-                                 (neg_j, Theme.ACCENT_RED, '↓ Negatif')]:
-        if len(subset) == 0:
-            continue
-        s = subset.copy()
-        s['_h'] = s.apply(
-            lambda r: f"{int(r['Tarih'].day)} {TR_AY_UZUN.get(r['Tarih'].month, '')} {int(r['Tarih'].year)}", 
-            axis=1
-        )
-        
+    if len(pos_j) > 0:
         fig.add_trace(go.Scatter(
-            x=s['Tarih'],
-            y=s['Dolar_Kuru'],
+            x=pos_j['Tarih'],
+            y=pos_j['Dolar_Kuru'],
             mode='markers',
-            name=name,
+            name='↑ Pozitif',
             marker=dict(
-                color=color,
-                size=s['Abs_Degisim'] * 2.5,
-                line=dict(color=color, width=3),
-                opacity=0.9
+                color=Theme.ACCENT_GREEN,
+                size=pos_j['Abs_Degisim'] * 2.5,
+                line=dict(color=Theme.ACCENT_GREEN, width=2),
+                opacity=0.8
             ),
-            customdata=list(zip(s['_h'], s['_pct_str'], s['_onc_kur_str'], s['_kur_str'])),
-            hovertemplate=f'<b>%{{customdata[0]}}</b><br>%{{customdata[3]}} ₺ ← %{{customdata[2]}} ₺<br>' +
-                         f'<b style="color:{color}">%{{customdata[1]}}</b><extra></extra>'
+            customdata=list(zip(
+                pos_j['Hover_Tarih'],
+                pos_j['_pct_str'],
+                pos_j['_onc_kur_str'],
+                pos_j['_kur_str']
+            )),
+            hovertemplate='<b>%{customdata[0]}</b><br>%{customdata[3]} ₺ ← %{customdata[2]} ₺<br>' +
+                         f'<b style="color:{Theme.ACCENT_GREEN}">%{{customdata[1]}}</b><extra></extra>'
+        ))
+    
+    # Negatif sıçramalar
+    if len(neg_j) > 0:
+        fig.add_trace(go.Scatter(
+            x=neg_j['Tarih'],
+            y=neg_j['Dolar_Kuru'],
+            mode='markers',
+            name='↓ Negatif',
+            marker=dict(
+                color=Theme.ACCENT_RED,
+                size=neg_j['Abs_Degisim'] * 2.5,
+                line=dict(color=Theme.ACCENT_RED, width=2),
+                opacity=0.8
+            ),
+            customdata=list(zip(
+                neg_j['Hover_Tarih'],
+                neg_j['_pct_str'],
+                neg_j['_onc_kur_str'],
+                neg_j['_kur_str']
+            )),
+            hovertemplate='<b>%{customdata[0]}</b><br>%{customdata[3]} ₺ ← %{customdata[2]} ₺<br>' +
+                         f'<b style="color:{Theme.ACCENT_RED}">%{{customdata[1]}}</b><extra></extra>'
         ))
     
     # Tick ayarları
@@ -791,18 +833,24 @@ def create_price_chart(df: pd.DataFrame, pos_j: pd.DataFrame, neg_j: pd.DataFram
         height=560,
         title=dict(
             text=f"USD/TRY · Eşik %{esik} · Top {gosterim_sec}",
-            font=dict(size=13, color=Theme.TEXT_MUTED, family='DM Mono, monospace'),
             x=0
         ),
-        xaxis=dict(tickformat='%b %Y'),
-        yaxis=dict(tickvals=tv_k, ticktext=tt_k) if tv_k else {}
+        xaxis=dict(
+            tickformat='%b %Y',
+            title="Tarih"
+        ),
+        yaxis=dict(
+            tickvals=tv_k if tv_k else None,
+            ticktext=tt_k if tt_k else None,
+            title="USD/TRY"
+        )
     )
     
     return fig
 
 def create_daily_change_chart(df: pd.DataFrame, pos_j: pd.DataFrame, neg_j: pd.DataFrame,
                               esik: float, etiket_quantile: int) -> go.Figure:
-    """Günlük değişim grafiğini oluşturur."""
+    """Günlük değişim grafiğini oluşturur - PNG uyumlu."""
     fig = go.Figure()
     
     # Ana değişim serisi
@@ -817,51 +865,64 @@ def create_daily_change_chart(df: pd.DataFrame, pos_j: pd.DataFrame, neg_j: pd.D
         hovertemplate='<b>%{customdata[0]}</b><br>%{customdata[1]}<extra></extra>'
     ))
     
-    # Sıçrama noktaları
-    for subset, color, name, tpos, sym in [
-        (pos_j, Theme.ACCENT_GREEN, '↑ Pozitif', 'top right', 'triangle-up'),
-        (neg_j, Theme.ACCENT_RED, '↓ Negatif', 'bottom right', 'triangle-down')
-    ]:
-        if len(subset) == 0:
-            continue
-        
-        s = subset.copy()
-        is_pos = (color == Theme.ACCENT_GREEN)
-        
-        # Etiket eşiği
-        if is_pos:
-            ethr = s['Yuzde_Degisim'].quantile(1 - etiket_quantile / 100)
-            s['_lbl'] = s.apply(
-                lambda r: f"{r['Tarih'].strftime('%d.%m.%y')} {tr_fmt_pct(r['Yuzde_Degisim'], 1)}"
-                if r['Yuzde_Degisim'] >= ethr else "",
-                axis=1
-            )
-        else:
-            ethr = s['Yuzde_Degisim'].quantile(etiket_quantile / 100)
-            s['_lbl'] = s.apply(
-                lambda r: f"{r['Tarih'].strftime('%d.%m.%y')} {tr_fmt_pct(r['Yuzde_Degisim'], 1)}"
-                if r['Yuzde_Degisim'] <= ethr else "",
-                axis=1
-            )
+    # Pozitif sıçramalar
+    if len(pos_j) > 0:
+        s = pos_j.copy()
+        ethr = s['Yuzde_Degisim'].quantile(1 - etiket_quantile / 100)
+        s['_lbl'] = s.apply(
+            lambda r: f"{r['Tarih'].strftime('%d.%m')} {tr_fmt_pct(r['Yuzde_Degisim'], 1)}"
+            if r['Yuzde_Degisim'] >= ethr else "",
+            axis=1
+        )
         
         fig.add_trace(go.Scatter(
             x=s['Tarih'],
             y=s['Yuzde_Degisim'],
             mode='markers+text',
-            name=name,
+            name='↑ Pozitif',
             marker=dict(
-                color=color,
+                color=Theme.ACCENT_GREEN,
                 size=s['Abs_Degisim'] * 1.8 + 5,
-                symbol=sym,
-                line=dict(color=color, width=1),
+                symbol='triangle-up',
+                line=dict(color=Theme.ACCENT_GREEN, width=1),
                 opacity=0.9
             ),
             text=s['_lbl'],
-            textposition=tpos,
-            textfont=dict(size=8, color=color, family='DM Mono, monospace'),
+            textposition='top center',
+            textfont=dict(size=8, color=Theme.ACCENT_GREEN, family='DM Mono, monospace'),
             customdata=list(zip(s['Hover_Tarih'], s['_onc_kur_str'], s['_kur_str'], s['_pct_str'])),
             hovertemplate=f'<b>%{{customdata[0]}}</b><br>%{{customdata[1]}} → %{{customdata[2]}} ₺<br>' +
-                         f'<b style="color:{color}">%{{customdata[3]}}</b><extra></extra>'
+                         f'<b style="color:{Theme.ACCENT_GREEN}">%{{customdata[3]}}</b><extra></extra>'
+        ))
+    
+    # Negatif sıçramalar
+    if len(neg_j) > 0:
+        s = neg_j.copy()
+        ethr = s['Yuzde_Degisim'].quantile(etiket_quantile / 100)
+        s['_lbl'] = s.apply(
+            lambda r: f"{r['Tarih'].strftime('%d.%m')} {tr_fmt_pct(r['Yuzde_Degisim'], 1)}"
+            if r['Yuzde_Degisim'] <= ethr else "",
+            axis=1
+        )
+        
+        fig.add_trace(go.Scatter(
+            x=s['Tarih'],
+            y=s['Yuzde_Degisim'],
+            mode='markers+text',
+            name='↓ Negatif',
+            marker=dict(
+                color=Theme.ACCENT_RED,
+                size=s['Abs_Degisim'] * 1.8 + 5,
+                symbol='triangle-down',
+                line=dict(color=Theme.ACCENT_RED, width=1),
+                opacity=0.9
+            ),
+            text=s['_lbl'],
+            textposition='bottom center',
+            textfont=dict(size=8, color=Theme.ACCENT_RED, family='DM Mono, monospace'),
+            customdata=list(zip(s['Hover_Tarih'], s['_onc_kur_str'], s['_kur_str'], s['_pct_str'])),
+            hovertemplate=f'<b>%{{customdata[0]}}</b><br>%{{customdata[1]}} → %{{customdata[2]}} ₺<br>' +
+                         f'<b style="color:{Theme.ACCENT_RED}">%{{customdata[3]}}</b><extra></extra>'
         ))
     
     # Eşik çizgileri
@@ -895,227 +956,23 @@ def create_daily_change_chart(df: pd.DataFrame, pos_j: pd.DataFrame, neg_j: pd.D
         height=500,
         title=dict(
             text=f"GÜNLÜK DEĞİŞİM · Eşik ±%{esik} · Etiket top %{etiket_quantile}",
-            font=dict(size=11, color=Theme.TEXT_MUTED, family='DM Mono, monospace'),
             x=0
         ),
-        xaxis=dict(tickformat='%b %Y'),
-        yaxis=dict(tickvals=tv_p, ticktext=tt_p) if tv_p else {}
+        xaxis=dict(
+            tickformat='%b %Y',
+            title="Tarih"
+        ),
+        yaxis=dict(
+            tickvals=tv_p if tv_p else None,
+            ticktext=tt_p if tt_p else None,
+            title="Değişim (%)"
+        )
     )
     
     return fig
 
-# =============================================================================
-# SIDEBAR BİLEŞENİ
-# =============================================================================
-def render_sidebar() -> Tuple[float, Any, str, int, float, int, str, List[str], float]:
-    """Sidebar kontrollerini render eder."""
-    with st.sidebar:
-        st.markdown(f"""
-        <div style="font-family:'DM Mono',monospace;font-size:0.65rem;text-transform:uppercase;
-            letter-spacing:0.15em;color:{Theme.ACCENT_BLUE};padding:16px 0 12px 0;
-            border-bottom:1px solid {Theme.BORDER};">
-            ◈ Parametre Kontrolü
-        </div>
-        """, unsafe_allow_html=True)
-        
-        st.markdown("<br>", unsafe_allow_html=True)
-        
-        # Ana parametreler
-        esik = st.slider(
-            "Günlük Sıçrama Eşiği (%)",
-            min_value=0.5,
-            max_value=10.0,
-            value=2.0,
-            step=0.1,
-            help="Bu eşiğin üzerindeki günlük değişimler 'sıçrama' olarak kabul edilir."
-        )
-        
-        gosterim_sec = st.selectbox(
-            "Gösterilecek Sıçrama Sayısı",
-            options=[10, 20, 30, 50, 75, 100, "Tümü"],
-            index=2,
-            help="Tablolarda ve grafiklerde kaç sıçramanın gösterileceği."
-        )
-        
-        yon = st.radio(
-            "Sıçrama Yönü",
-            options=["Tümü", "Yalnız Pozitif ↑", "Yalnız Negatif ↓"],
-            help="Hangi yöndeki sıçramaların analiz edileceği."
-        )
-        
-        st.markdown(f"""
-        <div style="font-family:'DM Mono',monospace;font-size:0.65rem;text-transform:uppercase;
-            letter-spacing:0.15em;color:{Theme.ACCENT_BLUE};padding:20px 0 12px 0;
-            border-bottom:1px solid {Theme.BORDER};">
-            ◈ Etiket Ayarı
-        </div>
-        """, unsafe_allow_html=True)
-        
-        etiket_quantile = st.slider(
-            "Günlük — Etiketlenecek Dilim (%)",
-            min_value=10,
-            max_value=100,
-            value=40,
-            step=5,
-            help="En büyük sıçramaların yüzde kaçının grafikte etiketleneceği."
-        )
-        
-        st.markdown(f"""
-        <div style="font-family:'DM Mono',monospace;font-size:0.65rem;text-transform:uppercase;
-            letter-spacing:0.15em;color:{Theme.ACCENT_BLUE};padding:20px 0 12px 0;
-            border-bottom:1px solid {Theme.BORDER};">
-            ◈ Haftalık / Gün Analizi
-        </div>
-        """, unsafe_allow_html=True)
-        
-        haftalik_esik = st.slider(
-            "Haftalık Sıçrama Eşiği (%)",
-            min_value=0.0,
-            max_value=20.0,
-            value=3.0,
-            step=0.5,
-            help="Haftalık değişimler için sıçrama eşiği."
-        )
-        
-        haftalik_etiket = st.slider(
-            "Haftalık — Etiketlenecek Dilim (%)",
-            min_value=10,
-            max_value=100,
-            value=40,
-            step=5,
-            key="haftalik_etiket"
-        )
-        
-        haftalik_yon = st.radio(
-            "Haftalık Yön",
-            options=["Tümü", "Yalnız Pozitif ↑", "Yalnız Negatif ↓"],
-            key="haftalik_yon"
-        )
-        
-        gun_filtre = st.multiselect(
-            "Gün Filtresi",
-            options=["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"],
-            default=[],
-            help="Analiz edilecek günleri filtreleyin."
-        )
-        
-        st.markdown(f"""
-        <div style="font-family:'DM Mono',monospace;font-size:0.65rem;text-transform:uppercase;
-            letter-spacing:0.15em;color:{Theme.ACCENT_BLUE};padding:20px 0 12px 0;
-            border-bottom:1px solid {Theme.BORDER};">
-            ◈ İleri Analiz
-        </div>
-        """, unsafe_allow_html=True)
-        
-        fwd_threshold = st.slider(
-            "Tetikleyici Eşik (%)",
-            min_value=0.5,
-            max_value=15.0,
-            value=3.0,
-            step=0.5,
-            help="İleri analiz için kullanılacak sıçrama eşiği."
-        )
-        
-        st.markdown(f"""
-        <div style="font-family:'DM Mono',monospace;font-size:0.65rem;text-transform:uppercase;
-            letter-spacing:0.15em;color:{Theme.ACCENT_BLUE};padding:20px 0 12px 0;
-            border-bottom:1px solid {Theme.BORDER};">
-            ◈ Veri Kaynağı
-        </div>
-        """, unsafe_allow_html=True)
-        
-        uploaded_file = st.file_uploader(
-            "Excel Dosyası (.xlsx)",
-            type=['xlsx', 'xls'],
-            help="EVDS'den indirilen Excel dosyasını yükleyin."
-        )
-        
-        st.markdown(f"""
-        <div style="font-size:0.72rem;color:#3a5070;margin-top:8px;line-height:1.7;">
-            Sayfa: <span style="color:{Theme.ACCENT_BLUE_LIGHT};font-family:'DM Mono',monospace;">EVDS</span><br>
-            Sütun 1: <span style="color:{Theme.ACCENT_BLUE_LIGHT};font-family:'DM Mono',monospace;">Tarih (DD-MM-YYYY)</span><br>
-            Sütun 2: <span style="color:{Theme.ACCENT_BLUE_LIGHT};font-family:'DM Mono',monospace;">TP_DK_USD_A_YTL</span>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        return (esik, gosterim_sec, yon, etiket_quantile, haftalik_esik, 
-                haftalik_etiket, haftalik_yon, gun_filtre, fwd_threshold, uploaded_file)
-
-# =============================================================================
-# TAB İÇERİKLERİ
-# =============================================================================
-def render_tab1(df: pd.DataFrame, sicramalar: pd.DataFrame, pos_j: pd.DataFrame, 
-                neg_j: pd.DataFrame, esik: float, gosterim_sec: Any, 
-                etiket_quantile: int) -> None:
-    """Günlük Analiz tab'ını render eder."""
-    create_section_header("Dolar Kuru & Sıçrama Noktaları")
-    
-    # Fiyat grafiği
-    fig1 = create_price_chart(df, pos_j, neg_j, esik, gosterim_sec)
-    st.plotly_chart(fig1, use_container_width=True)
-    
-    # Günlük değişim grafiği
-    create_section_header("Günlük Değişim")
-    fig2 = create_daily_change_chart(df, pos_j, neg_j, esik, etiket_quantile)
-    st.plotly_chart(fig2, use_container_width=True)
-    
-    # Top 10 kartları
-    create_section_header("En Büyük 10 Sıçrama")
-    render_jump_cards(sicramalar)
-
-def render_tab2(df: pd.DataFrame, hf_global: pd.DataFrame, gun_filtre: List[str],
-                haftalik_esik: float, haftalik_etiket: int, haftalik_yon: str) -> None:
-    """Haftalık & Aylık Analiz tab'ını render eder."""
-    ALL_DAYS_TR = ['Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma']
-    aktif_gunler = gun_filtre if gun_filtre else ALL_DAYS_TR
-    
-    # Gün bazlı scatter
-    create_section_header("Günlük Değişim — Gün Bazlı Karşılaştırma")
-    fig_gd = create_daily_by_day_chart(df, aktif_gunler)
-    st.plotly_chart(fig_gd, use_container_width=True)
-    
-    # Gün istatistik kartları
-    create_section_header("Gün Bazlı İstatistikler")
-    render_day_stats_cards(df, aktif_gunler)
-    
-    # Violin grafiği
-    create_section_header("Dağılım Karşılaştırması (Violin)")
-    fig_vio = create_violin_chart(df, ALL_DAYS_TR)
-    st.plotly_chart(fig_vio, use_container_width=True)
-    
-    # Haftalık değişim
-    create_section_header("Haftalık Değişim — Pazartesi → Cuma")
-    fig_hw, hf_pos_sc, hf_neg_sc = create_weekly_chart(
-        hf_global, haftalik_esik, haftalik_yon, haftalik_etiket
-    )
-    st.plotly_chart(fig_hw, use_container_width=True)
-    
-    # Haftalık KPI'lar
-    render_weekly_kpis(hf_global, haftalik_esik)
-    
-    # Haftalık tablo
-    create_section_header("Haftalık Değişim Tablosu")
-    render_weekly_table(hf_global)
-    
-    # Aylık getiri ve volatilite
-    col_am1, col_am2 = st.columns(2)
-    with col_am1:
-        create_section_header("Aylık Getiri (21 Gün)")
-        fig_am = create_monthly_return_chart(df, aktif_gunler)
-        st.plotly_chart(fig_am, use_container_width=True)
-    
-    with col_am2:
-        create_section_header("Yuvarlanmalı Volatilite")
-        fig_vol = create_volatility_chart(df)
-        st.plotly_chart(fig_vol, use_container_width=True)
-    
-    # Yıl-Ay ısı haritası
-    create_section_header("Yıl–Ay Ortalama Günlük Getiri (Isı Haritası)")
-    fig_heat = create_monthly_heatmap(df)
-    st.plotly_chart(fig_heat, use_container_width=True)
-
 def create_daily_by_day_chart(df: pd.DataFrame, aktif_gunler: List[str]) -> go.Figure:
-    """Gün bazlı değişim grafiği oluşturur."""
+    """Gün bazlı değişim grafiği oluşturur - PNG uyumlu."""
     fig = go.Figure()
     
     # Arkaplan çizgisi
@@ -1131,6 +988,9 @@ def create_daily_by_day_chart(df: pd.DataFrame, aktif_gunler: List[str]) -> go.F
     
     for gun_tr in aktif_gunler:
         sub = df[df['Gun_Adi_TR'] == gun_tr].copy()
+        if len(sub) == 0:
+            continue
+            
         color = GUN_RENKLERI.get(gun_tr, Theme.TEXT_SECONDARY)
         
         fig.add_trace(go.Scatter(
@@ -1140,8 +1000,8 @@ def create_daily_by_day_chart(df: pd.DataFrame, aktif_gunler: List[str]) -> go.F
             name=gun_tr,
             marker=dict(
                 color=color,
-                size=5,
-                opacity=0.85,
+                size=6,
+                opacity=0.8,
                 line=dict(color='rgba(0,0,0,0.3)', width=0.5)
             ),
             customdata=list(zip(
@@ -1149,7 +1009,7 @@ def create_daily_by_day_chart(df: pd.DataFrame, aktif_gunler: List[str]) -> go.F
                 sub['_kur_str'],
                 sub['_onc_kur_str']
             )),
-            hovertemplate=f'<b>{{gun_tr}}</b> — %{{x|%d.%m.%Y}}<br>' +
+            hovertemplate=f'<b>{gun_tr}</b> — %{{x|%d.%m.%Y}}<br>' +
                          'Değişim: <b>%{customdata[0]}</b><br>' +
                          'Kur: %{customdata[2]} → %{customdata[1]} ₺<extra></extra>'
         ))
@@ -1167,21 +1027,40 @@ def create_daily_by_day_chart(df: pd.DataFrame, aktif_gunler: List[str]) -> go.F
         height=460,
         title=dict(
             text=f"GÜN BAZLI DEĞİŞİM — {', '.join(aktif_gunler)}",
-            font=dict(size=11, color=Theme.TEXT_MUTED, family='DM Mono, monospace'),
             x=0
         ),
-        xaxis=dict(tickformat='%b %Y'),
-        yaxis=dict(tickvals=tv_gd, ticktext=tt_gd) if tv_gd else {}
+        xaxis=dict(
+            tickformat='%b %Y',
+            title="Tarih"
+        ),
+        yaxis=dict(
+            tickvals=tv_gd if tv_gd else None,
+            ticktext=tt_gd if tt_gd else None,
+            title="Değişim (%)"
+        )
     )
     
     return fig
 
 def render_day_stats_cards(df: pd.DataFrame, aktif_gunler: List[str]) -> None:
     """Gün bazlı istatistik kartlarını render eder."""
+    if not aktif_gunler:
+        return
+        
     kart_cols = st.columns(len(aktif_gunler))
     
     for i, gun_tr in enumerate(aktif_gunler):
         sub = df[df['Gun_Adi_TR'] == gun_tr]
+        if len(sub) == 0:
+            with kart_cols[i]:
+                st.markdown(f"""
+                <div class="metric-card" style="border-top: 2px solid {Theme.TEXT_MUTED};">
+                    <div class="metric-label">{gun_tr}</div>
+                    <div class="metric-value">Veri yok</div>
+                </div>
+                """, unsafe_allow_html=True)
+            continue
+            
         ort = sub['Yuzde_Degisim'].mean()
         std = sub['Yuzde_Degisim'].std()
         maks = sub['Yuzde_Degisim'].max()
@@ -1213,11 +1092,14 @@ def render_day_stats_cards(df: pd.DataFrame, aktif_gunler: List[str]) -> None:
             """, unsafe_allow_html=True)
 
 def create_violin_chart(df: pd.DataFrame, gunler: List[str]) -> go.Figure:
-    """Violin grafiği oluşturur."""
+    """Violin grafiği oluşturur - PNG uyumlu."""
     fig = go.Figure()
     
     for gun_tr in gunler:
         sub = df[df['Gun_Adi_TR'] == gun_tr]
+        if len(sub) == 0:
+            continue
+            
         color = GUN_RENKLERI.get(gun_tr, Theme.ACCENT_BLUE_LIGHT)
         rr, gg, bb = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
         
@@ -1245,17 +1127,20 @@ def create_violin_chart(df: pd.DataFrame, gunler: List[str]) -> go.Figure:
         height=460,
         title=dict(
             text="GÜN BAZLI DEĞİŞİM — VİOLİN",
-            font=dict(size=11, color=Theme.TEXT_MUTED, family='DM Mono, monospace'),
             x=0
         ),
-        yaxis=dict(tickvals=tv_gd, ticktext=tt_gd) if tv_gd else {}
+        yaxis=dict(
+            tickvals=tv_gd if tv_gd else None,
+            ticktext=tt_gd if tt_gd else None,
+            title="Değişim (%)"
+        )
     )
     
     return fig
 
 def create_weekly_chart(hf: pd.DataFrame, esik: float, yon: str, 
                         etiket: int) -> Tuple[go.Figure, pd.DataFrame, pd.DataFrame]:
-    """Haftalık değişim grafiği oluşturur."""
+    """Haftalık değişim grafiği oluşturur - PNG uyumlu."""
     # Filtreleme
     if yon == "Yalnız Pozitif ↑":
         hf_sic = hf[hf['HaftaDegisim'] >= esik].copy()
@@ -1305,33 +1190,51 @@ def create_weekly_chart(hf: pd.DataFrame, esik: float, yon: str,
     ))
     
     # Pozitif sıçramalar
-    for subset, color, name, tpos, sym in [
-        (hf_pos_sc, Theme.ACCENT_GREEN, '↑ Pozitif', 'top right', 'triangle-up'),
-        (hf_neg_sc, Theme.ACCENT_RED, '↓ Negatif', 'bottom right', 'triangle-down')
-    ]:
-        if len(subset) == 0:
-            continue
-        
-        s = subset.copy()
+    if len(hf_pos_sc) > 0:
         fig.add_trace(go.Scatter(
-            x=s['XTarih'],
-            y=s['HaftaDegisim'],
+            x=hf_pos_sc['XTarih'],
+            y=hf_pos_sc['HaftaDegisim'],
             mode='markers+text',
-            name=name,
+            name='↑ Pozitif',
             marker=dict(
-                color=color,
-                size=s['AbsDegisim'] * 1.8 + 5,
-                symbol=sym,
-                line=dict(color=color, width=2),
+                color=Theme.ACCENT_GREEN,
+                size=hf_pos_sc['AbsDegisim'] * 1.8 + 5,
+                symbol='triangle-up',
+                line=dict(color=Theme.ACCENT_GREEN, width=2),
                 opacity=0.9
             ),
-            text=s['_lbl'],
-            textposition=tpos,
-            textfont=dict(size=8, color=color, family='DM Mono, monospace'),
-            customdata=list(zip(s['Aralik'], s['_pzt_str'], s['_cum_str'], s['_hf_str'])),
+            text=hf_pos_sc['_lbl'],
+            textposition='top center',
+            textfont=dict(size=8, color=Theme.ACCENT_GREEN, family='DM Mono, monospace'),
+            customdata=list(zip(hf_pos_sc['Aralik'], hf_pos_sc['_pzt_str'], 
+                               hf_pos_sc['_cum_str'], hf_pos_sc['_hf_str'])),
             hovertemplate=f'<b>%{{customdata[0]}}</b><br>' +
                          f'Pzt: %{{customdata[1]}} ₺ → Cum: %{{customdata[2]}} ₺<br>' +
-                         f'<b style="color:{color}">%{{customdata[3]}}</b><extra></extra>'
+                         f'<b style="color:{Theme.ACCENT_GREEN}">%{{customdata[3]}}</b><extra></extra>'
+        ))
+    
+    # Negatif sıçramalar
+    if len(hf_neg_sc) > 0:
+        fig.add_trace(go.Scatter(
+            x=hf_neg_sc['XTarih'],
+            y=hf_neg_sc['HaftaDegisim'],
+            mode='markers+text',
+            name='↓ Negatif',
+            marker=dict(
+                color=Theme.ACCENT_RED,
+                size=hf_neg_sc['AbsDegisim'] * 1.8 + 5,
+                symbol='triangle-down',
+                line=dict(color=Theme.ACCENT_RED, width=2),
+                opacity=0.9
+            ),
+            text=hf_neg_sc['_lbl'],
+            textposition='bottom center',
+            textfont=dict(size=8, color=Theme.ACCENT_RED, family='DM Mono, monospace'),
+            customdata=list(zip(hf_neg_sc['Aralik'], hf_neg_sc['_pzt_str'], 
+                               hf_neg_sc['_cum_str'], hf_neg_sc['_hf_str'])),
+            hovertemplate=f'<b>%{{customdata[0]}}</b><br>' +
+                         f'Pzt: %{{customdata[1]}} ₺ → Cum: %{{customdata[2]}} ₺<br>' +
+                         f'<b style="color:{Theme.ACCENT_RED}">%{{customdata[3]}}</b><extra></extra>'
         ))
     
     # Eşik çizgileri
@@ -1367,11 +1270,17 @@ def create_weekly_chart(hf: pd.DataFrame, esik: float, yon: str,
         height=520,
         title=dict(
             text=f"HAFTALIK DEĞİŞİM (Pzt→Cum) · Eşik ±%{esik} · Etiket top %{etiket}",
-            font=dict(size=11, color=Theme.TEXT_MUTED, family='DM Mono, monospace'),
             x=0
         ),
-        xaxis=dict(tickformat='%b %Y'),
-        yaxis=dict(tickvals=tv_hf, ticktext=tt_hf) if tv_hf else {}
+        xaxis=dict(
+            tickformat='%b %Y',
+            title="Tarih"
+        ),
+        yaxis=dict(
+            tickvals=tv_hf if tv_hf else None,
+            ticktext=tt_hf if tt_hf else None,
+            title="Değişim (%)"
+        )
     )
     
     return fig, hf_pos_sc, hf_neg_sc
@@ -1434,26 +1343,29 @@ def render_weekly_table(hf: pd.DataFrame) -> None:
     styled = style_dataframe(hf_tablo)
     st.dataframe(styled, use_container_width=True, height=420)
 
-def create_monthly_return_chart(df: pd.DataFrame, aktif_gunler: List[str]) -> go.Figure:
-    """Aylık getiri grafiği oluşturur."""
-    aylik_g = df.dropna(subset=['Aylik_Getiri']).copy()
+def create_monthly_change_chart(df: pd.DataFrame, aktif_gunler: List[str]) -> go.Figure:
+    """Aylık değişim grafiği oluşturur - PNG uyumlu."""
+    aylik_g = df.dropna(subset=['Aylik_Degisim']).copy()
     
     if aktif_gunler:
         aylik_g = aylik_g[aylik_g['Gun_Adi_TR'].isin(aktif_gunler)]
     
-    aylik_g['renk'] = aylik_g['Aylik_Getiri'].apply(
+    if len(aylik_g) == 0:
+        return go.Figure()
+    
+    aylik_g['renk'] = aylik_g['Aylik_Degisim'].apply(
         lambda x: Theme.ACCENT_BLUE_LIGHT if x >= 0 else Theme.ACCENT_RED
     )
     
     fig = go.Figure()
     fig.add_trace(go.Bar(
         x=aylik_g['Tarih'],
-        y=aylik_g['Aylik_Getiri'],
+        y=aylik_g['Aylik_Degisim'],
         marker_color=aylik_g['renk'].values,
         opacity=0.8,
         customdata=list(zip(
             aylik_g['Gun_Adi_TR'],
-            aylik_g['Aylik_Getiri'].apply(lambda x: tr_fmt_pct(x, 2))
+            aylik_g['Aylik_Degisim'].apply(lambda x: tr_fmt_pct(x, 2))
         )),
         hovertemplate='%{x|%d.%m.%Y} (%{customdata[0]})<br>' +
                      '21G: <b>%{customdata[1]}</b><extra></extra>'
@@ -1462,8 +1374,8 @@ def create_monthly_return_chart(df: pd.DataFrame, aktif_gunler: List[str]) -> go
     fig.add_hline(y=0, line_color=Theme.BORDER, line_width=1)
     
     tv_am, tt_am = safe_ticks(
-        aylik_g['Aylik_Getiri'].min(),
-        aylik_g['Aylik_Getiri'].max(),
+        aylik_g['Aylik_Degisim'].min(),
+        aylik_g['Aylik_Degisim'].max(),
         n=8, decimals=1, suffix='%'
     )
     
@@ -1471,19 +1383,25 @@ def create_monthly_return_chart(df: pd.DataFrame, aktif_gunler: List[str]) -> go
         fig,
         height=340,
         title=dict(
-            text="21 GÜNLÜK (AYLIK) GETİRİ",
-            font=dict(size=11, color=Theme.TEXT_MUTED, family='DM Mono, monospace'),
+            text="21 GÜNLÜK (AYLIK) DEĞİŞİM",
             x=0
         ),
-        yaxis=dict(tickvals=tv_am, ticktext=tt_am) if tv_am else {},
-        xaxis=dict(tickformat='%b %Y'),
+        yaxis=dict(
+            tickvals=tv_am if tv_am else None,
+            ticktext=tt_am if tt_am else None,
+            title="Değişim (%)"
+        ),
+        xaxis=dict(
+            tickformat='%b %Y',
+            title="Tarih"
+        ),
         showlegend=False
     )
     
     return fig
 
 def create_volatility_chart(df: pd.DataFrame) -> go.Figure:
-    """Volatilite grafiği oluşturur."""
+    """Volatilite grafiği oluşturur - PNG uyumlu."""
     fig = go.Figure()
     
     fig.add_trace(go.Scatter(
@@ -1516,17 +1434,23 @@ def create_volatility_chart(df: pd.DataFrame) -> go.Figure:
         height=340,
         title=dict(
             text="YUVARLANMALI VOLATİLİTE",
-            font=dict(size=11, color=Theme.TEXT_MUTED, family='DM Mono, monospace'),
             x=0
         ),
-        yaxis=dict(tickvals=tv_vol, ticktext=tt_vol) if tv_vol else {},
-        xaxis=dict(tickformat='%b %Y')
+        yaxis=dict(
+            tickvals=tv_vol if tv_vol else None,
+            ticktext=tt_vol if tt_vol else None,
+            title="Volatilite (%)"
+        ),
+        xaxis=dict(
+            tickformat='%b %Y',
+            title="Tarih"
+        )
     )
     
     return fig
 
 def create_monthly_heatmap(df: pd.DataFrame) -> go.Figure:
-    """Yıl-Ay ısı haritası oluşturur."""
+    """Yıl-Ay ısı haritası oluşturur - PNG uyumlu."""
     ay_pivot = df.groupby(['Yil', 'Ay'])['Yuzde_Degisim'].mean().unstack(fill_value=np.nan)
     ay_pivot.columns = [TR_AY.get(c, str(c)) for c in ay_pivot.columns]
     
@@ -1544,89 +1468,249 @@ def create_monthly_heatmap(df: pd.DataFrame) -> go.Figure:
         zmid=0,
         text=text_matrix,
         texttemplate="%{text}",
-        textfont=dict(size=9, family='DM Mono, monospace'),
+        textfont=dict(size=9, family='DM Mono, monospace', color=Theme.TEXT_PRIMARY),
         hovertemplate='<b>%{y} — %{x}</b><br>Ort. Günlük: <b>%{text}</b><extra></extra>',
-        colorbar=dict(tickfont=dict(size=9, color=Theme.TEXT_MUTED))
+        colorbar=dict(
+            title="Ort. Değişim",
+            tickfont=dict(size=9, color=Theme.TEXT_MUTED)
+        )
     ))
     
     apply_base(
         fig,
         height=500,
         title=dict(
-            text="YIL–AY ORTALAMA GÜNLÜK GETİRİ",
-            font=dict(size=11, color=Theme.TEXT_MUTED, family='DM Mono, monospace'),
+            text="YIL–AY ORTALAMA GÜNLÜK DEĞİŞİM",
             x=0
         ),
-        xaxis=dict(side='bottom', tickfont=dict(size=11, color=Theme.TEXT_MUTED)),
-        yaxis=dict(tickfont=dict(size=11, color=Theme.TEXT_MUTED), autorange='reversed')
+        xaxis=dict(
+            side='bottom',
+            tickfont=dict(size=11, color=Theme.TEXT_MUTED),
+            title="Ay"
+        ),
+        yaxis=dict(
+            tickfont=dict(size=11, color=Theme.TEXT_MUTED),
+            autorange='reversed',
+            title="Yıl"
+        )
     )
     
     return fig
 
-def render_tab3(df: pd.DataFrame, fwd_threshold: float) -> None:
-    """İleri Analiz tab'ını render eder."""
-    create_section_header(f"Büyük Sıçramalardan Sonra Ne Oluyor? (≥%{fwd_threshold})")
+def create_cumulative_jumps_chart(sicramalar: pd.DataFrame) -> go.Figure:
+    """Kümülatif sıçrama grafiği oluşturur - PNG uyumlu."""
+    if len(sicramalar) == 0:
+        return go.Figure()
+        
+    cum_df = sicramalar.sort_values('Tarih').reset_index(drop=True)
+    cum_df['Kumulatif'] = range(1, len(cum_df) + 1)
     
-    periods = [1, 5, 10, 21, 63]
-    period_labels = {1: '1G', 5: '5G (1Hf)', 10: '10G (2Hf)', 
-                     21: '21G (1Ay)', 63: '63G (3Ay)'}
+    fig = go.Figure(go.Scatter(
+        x=cum_df['Tarih'],
+        y=cum_df['Kumulatif'],
+        fill='tozeroy',
+        line=dict(color=Theme.ACCENT_BLUE_LIGHT, width=1.5),
+        fillcolor='rgba(74,158,255,0.06)',
+        hovertemplate='%{x|%d.%m.%Y}<br>Toplam: <b>%{y}</b> sıçrama<extra></extra>'
+    ))
     
-    fwd = forward_analysis(df, fwd_threshold, periods)
+    apply_base(
+        fig,
+        height=380,
+        title=dict(
+            text="KÜMÜLATİF SIÇRAMA SAYISI",
+            x=0
+        ),
+        xaxis=dict(
+            tickformat='%b %Y',
+            title="Tarih"
+        ),
+        yaxis=dict(
+            title="Sıçrama Sayısı"
+        )
+    )
     
-    if not fwd:
-        st.warning(f"%{fwd_threshold} eşiğinde yeterli sıçrama bulunamadı.")
-        return
+    return fig
+
+def create_monthly_jumps_chart(sicramalar: pd.DataFrame) -> go.Figure:
+    """Aylık sıçrama grafiği oluşturur - PNG uyumlu."""
+    if len(sicramalar) == 0:
+        return go.Figure()
+        
+    ay_order_tr = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran',
+                   'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık']
     
-    # Forward kartları
-    cards_html = ""
-    for p in periods:
-        if p in fwd:
-            r = fwd[p]
-            mean_cls = "metric-pos" if r['mean'] >= 0 else "metric-neg"
-            sign = "+" if r['mean'] >= 0 else ""
-            
-            cards_html += f"""
-            <div class="forward-card">
-                <div class="forward-title">{period_labels[p]} Sonra</div>
-                <div class="forward-big {mean_cls}">{sign}{r['mean']:.2f}%</div>
-                <div class="forward-detail">
-                    <span style="color:#4a6080">Medyan:</span> 
-                    <span class="forward-accent">{'+' if r['median']>=0 else ''}{r['median']:.2f}%</span><br>
-                    <span style="color:#4a6080">Pozitif oran:</span> 
-                    <span class="forward-accent">%{r['pos_pct']:.0f}</span><br>
-                    <span style="color:#4a6080">IQR:</span> 
-                    <span class="forward-accent">{r['p25']:.2f}% — {r['p75']:.2f}%</span><br>
-                    <span style="color:#4a6080">Örnek:</span> 
-                    <span class="forward-accent">{r['n']}</span>
-                </div>
-            </div>"""
+    sicramalar['Ay_Adi_TR'] = sicramalar['Ay'].map(TR_AY_UZUN)
+    ay_sayim = sicramalar.groupby('Ay_Adi_TR').size().reindex(ay_order_tr).fillna(0)
     
-    st.markdown(f'<div class="forward-grid">{cards_html}</div>', unsafe_allow_html=True)
+    fig = go.Figure(go.Bar(
+        x=ay_sayim.index,
+        y=ay_sayim.values,
+        marker=dict(
+            color=ay_sayim.values,
+            colorscale=[[0, Theme.BORDER], [1, Theme.ACCENT_BLUE_LIGHT]],
+            line=dict(color='rgba(255,255,255,0.05)', width=1)
+        ),
+        hovertemplate='<b>%{x}</b><br>%{y} sıçrama<extra></extra>'
+    ))
     
-    # Box plot
-    create_section_header("Dağılım (Box Plot)")
-    fig_box = create_forward_boxplot(fwd, periods, period_labels)
-    st.plotly_chart(fig_box, use_container_width=True)
+    apply_base(
+        fig,
+        height=350,
+        title=dict(
+            text="AYLARA GÖRE SIÇRAMA SAYISI",
+            x=0
+        ),
+        xaxis=dict(
+            title="Ay"
+        ),
+        yaxis=dict(
+            title="Sıçrama Sayısı"
+        ),
+        showlegend=False
+    )
     
-    # Pozitif kapanış oranı
-    create_section_header("Pozitif Kapanış Oranı (Her Dönem)")
-    fig_win = create_win_rate_chart(fwd, periods, period_labels)
-    st.plotly_chart(fig_win, use_container_width=True)
+    return fig
+
+def create_magnitude_distribution_chart(sicramalar: pd.DataFrame) -> go.Figure:
+    """Sıçrama büyüklük dağılımı grafiği oluşturur - PNG uyumlu."""
+    if len(sicramalar) == 0:
+        return go.Figure()
+        
+    fig = go.Figure()
     
-    # Eşik hassasiyeti
-    create_section_header("Eşik Hassasiyeti (21G Ort. Getiri vs Tetikleyici Eşik)")
-    fig_sens = create_threshold_sensitivity(df)
-    st.plotly_chart(fig_sens, use_container_width=True)
+    pozitif = sicramalar[sicramalar['Yuzde_Degisim'] > 0]
+    if len(pozitif) > 0:
+        fig.add_trace(go.Histogram(
+            x=pozitif['Yuzde_Degisim'],
+            nbinsx=25,
+            name='↑ Pozitif',
+            marker_color=Theme.ACCENT_GREEN,
+            opacity=0.7,
+            hovertemplate='%{x:.1f}% — %{y} adet<extra></extra>'
+        ))
+    
+    negatif = sicramalar[sicramalar['Yuzde_Degisim'] < 0]
+    if len(negatif) > 0:
+        fig.add_trace(go.Histogram(
+            x=negatif['Yuzde_Degisim'],
+            nbinsx=25,
+            name='↓ Negatif',
+            marker_color=Theme.ACCENT_RED,
+            opacity=0.7,
+            hovertemplate='%{x:.1f}% — %{y} adet<extra></extra>'
+        ))
+    
+    apply_base(
+        fig,
+        height=380,
+        barmode='overlay',
+        title=dict(
+            text="SIÇRAMA BÜYÜKLÜKLERİ DAĞILIMI",
+            x=0
+        ),
+        xaxis=dict(
+            ticksuffix='%',
+            title="Değişim (%)"
+        ),
+        yaxis=dict(
+            title="Frekans"
+        )
+    )
+    
+    return fig
+
+def create_density_heatmap(sicramalar: pd.DataFrame) -> go.Figure:
+    """Yoğunluk ısı haritası oluşturur - PNG uyumlu."""
+    if len(sicramalar) == 0:
+        return go.Figure()
+        
+    pivot = sicramalar.groupby(['Yil', 'Ay']).size().unstack(fill_value=0)
+    ay_labels = [TR_AY.get(c, str(c)) for c in pivot.columns]
+    
+    fig = go.Figure(go.Heatmap(
+        z=pivot.values,
+        x=ay_labels,
+        y=pivot.index.astype(str),
+        colorscale=[[0, Theme.BG_SECONDARY], [0.5, Theme.ACCENT_BLUE], [1, Theme.ACCENT_GREEN]],
+        text=pivot.values,
+        texttemplate="%{text}",
+        textfont=dict(size=9, color=Theme.TEXT_PRIMARY, family='DM Mono, monospace'),
+        hovertemplate='<b>%{y} — %{x}</b><br>%{z} sıçrama<extra></extra>',
+        colorbar=dict(
+            title="Sıçrama Sayısı",
+            tickfont=dict(size=9, color=Theme.TEXT_MUTED)
+        )
+    ))
+    
+    apply_base(
+        fig,
+        height=350,
+        title=dict(
+            text="YIL–AY SIÇRAMA YOĞUNLUĞU",
+            x=0
+        ),
+        xaxis=dict(
+            side='bottom',
+            tickfont=dict(size=11, color=Theme.TEXT_MUTED),
+            title="Ay"
+        ),
+        yaxis=dict(
+            tickfont=dict(size=11, color=Theme.TEXT_MUTED),
+            autorange='reversed',
+            title="Yıl"
+        )
+    )
+    
+    return fig
+
+def create_weekly_pattern_chart(sicramalar: pd.DataFrame) -> go.Figure:
+    """Haftalık pattern grafiği oluşturur - PNG uyumlu."""
+    if len(sicramalar) == 0:
+        return go.Figure()
+        
+    gun_order_tr = ['Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi', 'Pazar']
+    sicramalar['Gun_Adi_TR'] = sicramalar['Gun_Adi'].map(TR_GUN)
+    gun_sayim = sicramalar.groupby('Gun_Adi_TR').size().reindex(gun_order_tr).fillna(0)
+    
+    fig = go.Figure(go.Bar(
+        x=gun_sayim.index,
+        y=gun_sayim.values,
+        marker=dict(
+            color=gun_sayim.values,
+            colorscale=[[0, Theme.BORDER], [1, Theme.ACCENT_PURPLE]],
+            line=dict(color='rgba(255,255,255,0.05)', width=1)
+        ),
+        hovertemplate='<b>%{x}</b><br>%{y} sıçrama<extra></extra>'
+    ))
+    
+    apply_base(
+        fig,
+        height=340,
+        title=dict(
+            text="HAFTANIN GÜNLERİNE GÖRE SIÇRAMA SAYISI",
+            x=0
+        ),
+        xaxis=dict(
+            title="Gün"
+        ),
+        yaxis=dict(
+            title="Sıçrama Sayısı"
+        ),
+        showlegend=False
+    )
+    
+    return fig
 
 def create_forward_boxplot(fwd: Dict, periods: List[int], 
                           period_labels: Dict) -> go.Figure:
-    """Forward analiz box plot oluşturur."""
+    """Forward analiz box plot oluşturur - PNG uyumlu."""
     fig = go.Figure()
     colors_box = [Theme.ACCENT_BLUE_LIGHT, Theme.ACCENT_GREEN, 
                   Theme.ACCENT_ORANGE, Theme.ACCENT_PURPLE, Theme.ACCENT_RED]
     
     for i, p in enumerate(periods):
-        if p in fwd:
+        if p in fwd and len(fwd[p]['raw']) > 0:
             c = colors_box[i % len(colors_box)]
             rr, gg, bb = int(c[1:3], 16), int(c[3:5], 16), int(c[5:7], 16)
             
@@ -1646,20 +1730,30 @@ def create_forward_boxplot(fwd: Dict, periods: List[int],
         fig,
         height=480,
         title=dict(
-            text=f"SIÇRAMA SONRASI GETİRİ DAĞILIMI",
-            font=dict(size=11, color=Theme.TEXT_MUTED, family='DM Mono, monospace'),
+            text="SIÇRAMA SONRASI DEĞİŞİM DAĞILIMI",
             x=0
         ),
-        yaxis=dict(ticksuffix='%')
+        yaxis=dict(
+            ticksuffix='%',
+            title="Değişim (%)"
+        )
     )
     
     return fig
 
 def create_win_rate_chart(fwd: Dict, periods: List[int], 
                           period_labels: Dict) -> go.Figure:
-    """Kazanma oranı grafiği oluşturur."""
-    pos_rates = [fwd[p]['pos_pct'] for p in periods if p in fwd]
-    period_names = [period_labels[p] for p in periods if p in fwd]
+    """Kazanma oranı grafiği oluşturur - PNG uyumlu."""
+    pos_rates = []
+    period_names = []
+    
+    for p in periods:
+        if p in fwd:
+            pos_rates.append(fwd[p]['pos_pct'])
+            period_names.append(period_labels[p])
+    
+    if not pos_rates:
+        return go.Figure()
     
     fig = go.Figure(go.Bar(
         x=period_names,
@@ -1684,18 +1778,21 @@ def create_win_rate_chart(fwd: Dict, periods: List[int],
         fig,
         height=360,
         title=dict(
-            text="DÖNEM SONU POZİTİF KAPIANIŞ ORANI",
-            font=dict(size=11, color=Theme.TEXT_MUTED, family='DM Mono, monospace'),
+            text="DÖNEM SONU POZİTİF KAPANIŞ ORANI",
             x=0
         ),
-        yaxis=dict(ticksuffix='%', range=[0, 105]),
+        yaxis=dict(
+            ticksuffix='%',
+            range=[0, 105],
+            title="Pozitif Oran (%)"
+        ),
         showlegend=False
     )
     
     return fig
 
 def create_threshold_sensitivity(df: pd.DataFrame) -> go.Figure:
-    """Eşik hassasiyeti grafiği oluşturur."""
+    """Eşik hassasiyeti grafiği oluşturur - PNG uyumlu."""
     thresholds = np.arange(1.0, 12.0, 0.5)
     means_21, counts_21 = [], []
     
@@ -1715,7 +1812,7 @@ def create_threshold_sensitivity(df: pd.DataFrame) -> go.Figure:
             x=thresholds,
             y=means_21,
             mode='lines+markers',
-            name='Ort. 21G Getiri',
+            name='Ort. 21G Değişim',
             line=dict(color=Theme.ACCENT_BLUE_LIGHT, width=2),
             marker=dict(size=6),
             hovertemplate='Eşik: %{x:.1f}%<br>Ort. 21G: <b>%{y:.2f}%</b><extra></extra>'
@@ -1739,249 +1836,48 @@ def create_threshold_sensitivity(df: pd.DataFrame) -> go.Figure:
     fig.update_layout(
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(13,18,32,0.9)',
-        font=dict(color=Theme.TEXT_SECONDARY, family='DM Sans, sans-serif'),
+        font=dict(color=Theme.TEXT_SECONDARY, family='DM Sans, sans-serif', size=11),
         height=400,
         title=dict(
-            text="EŞİK HASSASİYETİ — 21G ORTALAMA GETİRİ",
-            font=dict(size=11, color=Theme.TEXT_MUTED, family='DM Mono, monospace'),
+            text="EŞİK HASSASİYETİ — 21G ORTALAMA DEĞİŞİM",
+            font=dict(size=13, color=Theme.TEXT_MUTED, family='DM Mono, monospace'),
             x=0
         ),
-        legend=dict(bgcolor='rgba(13,18,32,0.8)', bordercolor=Theme.BORDER),
+        legend=dict(
+            bgcolor='rgba(13,18,32,0.8)',
+            bordercolor=Theme.BORDER,
+            font=dict(size=10)
+        ),
         hoverlabel=dict(
             bgcolor=Theme.BG_SECONDARY,
-            font_size=12,
+            font_size=11,
             font_color=Theme.TEXT_PRIMARY
         ),
-        xaxis=dict(gridcolor='#131c2e', ticksuffix='%'),
-        yaxis=dict(gridcolor='#131c2e', ticksuffix='%'),
+        xaxis=dict(
+            title="Eşik (%)",
+            gridcolor='#131c2e',
+            ticksuffix='%'
+        ),
+        yaxis=dict(
+            title="Ortalama Değişim (%)",
+            gridcolor='#131c2e',
+            ticksuffix='%'
+        ),
         yaxis2=dict(
+            title="Örnek Sayısı",
             gridcolor='#0d1220',
-            tickfont=dict(size=9, color='#3a5070'),
-            title=dict(text='n', font=dict(color='#3a5070'))
-        )
+            tickfont=dict(size=9, color='#3a5070')
+        ),
+        margin=dict(l=60, r=40, t=60, b=50)
     )
     
     return fig
-
-def render_tab4(df: pd.DataFrame, sicramalar: pd.DataFrame) -> None:
-    """Dağılım & Isıtma tab'ını render eder."""
-    col_l, col_r = st.columns(2)
-    
-    with col_l:
-        # Kümülatif sıçrama sayısı
-        create_section_header("Kümülatif Sıçrama Sayısı")
-        fig3 = create_cumulative_jumps_chart(sicramalar)
-        st.plotly_chart(fig3, use_container_width=True)
-        
-        # Aylara göre sıçrama
-        create_section_header("Aylara Göre Sıçrama")
-        fig4 = create_monthly_jumps_chart(sicramalar)
-        st.plotly_chart(fig4, use_container_width=True)
-    
-    with col_r:
-        # Büyüklük dağılımı
-        create_section_header("Büyüklük Dağılımı")
-        fig7 = create_magnitude_distribution_chart(sicramalar)
-        st.plotly_chart(fig7, use_container_width=True)
-        
-        # Yıl-Ay yoğunluk haritası
-        create_section_header("Yıl–Ay Yoğunluk Haritası")
-        fig8 = create_density_heatmap(sicramalar)
-        st.plotly_chart(fig8, use_container_width=True)
-    
-    # Haftalık pattern
-    create_section_header("Haftalık Pattern")
-    fig5 = create_weekly_pattern_chart(sicramalar)
-    st.plotly_chart(fig5, use_container_width=True)
-
-def create_cumulative_jumps_chart(sicramalar: pd.DataFrame) -> go.Figure:
-    """Kümülatif sıçrama grafiği oluşturur."""
-    cum_df = sicramalar.sort_values('Tarih').reset_index(drop=True)
-    cum_df['Kumulatif'] = range(1, len(cum_df) + 1)
-    
-    fig = go.Figure(go.Scatter(
-        x=cum_df['Tarih'],
-        y=cum_df['Kumulatif'],
-        fill='tozeroy',
-        line=dict(color=Theme.ACCENT_BLUE_LIGHT, width=1.5),
-        fillcolor='rgba(74,158,255,0.06)',
-        hovertemplate='%{x|%d.%m.%Y}<br>Toplam: <b>%{y}</b> sıçrama<extra></extra>'
-    ))
-    
-    apply_base(
-        fig,
-        height=380,
-        title=dict(
-            text="KÜMÜLATİF SIÇRAMA SAYISI",
-            font=dict(size=11, color=Theme.TEXT_MUTED, family='DM Mono, monospace'),
-            x=0
-        ),
-        xaxis=dict(tickformat='%b %Y')
-    )
-    
-    return fig
-
-def create_monthly_jumps_chart(sicramalar: pd.DataFrame) -> go.Figure:
-    """Aylık sıçrama grafiği oluşturur."""
-    ay_order_tr = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran',
-                   'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık']
-    
-    sicramalar['Ay_Adi_TR'] = sicramalar['Ay'].map(TR_AY_UZUN)
-    ay_sayim = sicramalar.groupby('Ay_Adi_TR').size().reindex(ay_order_tr).fillna(0)
-    
-    fig = go.Figure(go.Bar(
-        x=ay_sayim.index,
-        y=ay_sayim.values,
-        marker=dict(
-            color=ay_sayim.values,
-            colorscale=[[0, Theme.BORDER], [1, Theme.ACCENT_BLUE_LIGHT]],
-            line=dict(color='rgba(255,255,255,0.05)', width=1)
-        ),
-        hovertemplate='<b>%{x}</b><br>%{y} sıçrama<extra></extra>'
-    ))
-    
-    apply_base(
-        fig,
-        height=350,
-        title=dict(
-            text="AYLARA GÖRE SIÇRAMA SAYISI",
-            font=dict(size=11, color=Theme.TEXT_MUTED, family='DM Mono, monospace'),
-            x=0
-        ),
-        showlegend=False
-    )
-    
-    return fig
-
-def create_magnitude_distribution_chart(sicramalar: pd.DataFrame) -> go.Figure:
-    """Sıçrama büyüklük dağılımı grafiği oluşturur."""
-    fig = go.Figure()
-    
-    fig.add_trace(go.Histogram(
-        x=sicramalar[sicramalar['Yuzde_Degisim'] > 0]['Yuzde_Degisim'],
-        nbinsx=25,
-        name='↑ Pozitif',
-        marker_color=Theme.ACCENT_GREEN,
-        opacity=0.7,
-        hovertemplate='%{x:.1f}% — %{y} adet<extra></extra>'
-    ))
-    
-    fig.add_trace(go.Histogram(
-        x=sicramalar[sicramalar['Yuzde_Degisim'] < 0]['Yuzde_Degisim'],
-        nbinsx=25,
-        name='↓ Negatif',
-        marker_color=Theme.ACCENT_RED,
-        opacity=0.7,
-        hovertemplate='%{x:.1f}% — %{y} adet<extra></extra>'
-    ))
-    
-    apply_base(
-        fig,
-        height=380,
-        barmode='overlay',
-        title=dict(
-            text="SIÇRAMA BÜYÜKLÜKLERİ DAĞILIMI",
-            font=dict(size=11, color=Theme.TEXT_MUTED, family='DM Mono, monospace'),
-            x=0
-        ),
-        xaxis=dict(ticksuffix='%')
-    )
-    
-    return fig
-
-def create_density_heatmap(sicramalar: pd.DataFrame) -> go.Figure:
-    """Yoğunluk ısı haritası oluşturur."""
-    pivot = sicramalar.groupby(['Yil', 'Ay']).size().unstack(fill_value=0)
-    ay_labels = [TR_AY.get(c, str(c)) for c in pivot.columns]
-    
-    fig = go.Figure(go.Heatmap(
-        z=pivot.values,
-        x=ay_labels,
-        y=pivot.index.astype(str),
-        colorscale=[[0, Theme.BG_SECONDARY], [0.5, Theme.ACCENT_BLUE], [1, Theme.ACCENT_GREEN]],
-        text=pivot.values,
-        texttemplate="%{text}",
-        textfont=dict(size=9, color=Theme.TEXT_PRIMARY, family='DM Mono, monospace'),
-        hovertemplate='<b>%{y} — %{x}</b><br>%{z} sıçrama<extra></extra>',
-        colorbar=dict(tickfont=dict(size=9, color=Theme.TEXT_MUTED))
-    ))
-    
-    apply_base(
-        fig,
-        height=350,
-        title=dict(
-            text="YIL–AY SIÇRAMA YOĞUNLUĞU",
-            font=dict(size=11, color=Theme.TEXT_MUTED, family='DM Mono, monospace'),
-            x=0
-        ),
-        xaxis=dict(side='bottom', tickfont=dict(size=11, color=Theme.TEXT_MUTED)),
-        yaxis=dict(tickfont=dict(size=11, color=Theme.TEXT_MUTED), autorange='reversed')
-    )
-    
-    return fig
-
-def create_weekly_pattern_chart(sicramalar: pd.DataFrame) -> go.Figure:
-    """Haftalık pattern grafiği oluşturur."""
-    gun_order_tr = ['Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi', 'Pazar']
-    sicramalar['Gun_Adi_TR'] = sicramalar['Gun_Adi'].map(TR_GUN)
-    gun_sayim = sicramalar.groupby('Gun_Adi_TR').size().reindex(gun_order_tr).fillna(0)
-    
-    fig = go.Figure(go.Bar(
-        x=gun_sayim.index,
-        y=gun_sayim.values,
-        marker=dict(
-            color=gun_sayim.values,
-            colorscale=[[0, Theme.BORDER], [1, Theme.ACCENT_PURPLE]],
-            line=dict(color='rgba(255,255,255,0.05)', width=1)
-        ),
-        hovertemplate='<b>%{x}</b><br>%{y} sıçrama<extra></extra>'
-    ))
-    
-    apply_base(
-        fig,
-        height=340,
-        title=dict(
-            text="HAFTANIN GÜNLERİNE GÖRE SIÇRAMA SAYISI",
-            font=dict(size=11, color=Theme.TEXT_MUTED, family='DM Mono, monospace'),
-            x=0
-        ),
-        showlegend=False
-    )
-    
-    return fig
-
-def render_tab5(df: pd.DataFrame, top_sic: pd.DataFrame, hf_global: pd.DataFrame,
-                sicramalar: pd.DataFrame) -> None:
-    """Tablolar tab'ını render eder."""
-    # Sıçrama tablosu
-    create_section_header("Sıçrama Tablosu")
-    tbl_show = create_jumps_table(top_sic)
-    st.dataframe(tbl_show, use_container_width=True, height=420)
-    
-    # Özet tablolar
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        create_section_header("Aylık Özet")
-        aylik = create_monthly_summary(sicramalar)
-        st.dataframe(aylik, use_container_width=True)
-    
-    with col2:
-        create_section_header("Yıllık Özet")
-        yillik = create_yearly_summary(sicramalar)
-        st.dataframe(yillik, use_container_width=True)
-    
-    # Haftalık tablo
-    create_section_header("Haftalık Değişim Tablosu (Pzt → Cum)")
-    hf_t = create_weekly_summary_table(hf_global)
-    st.dataframe(hf_t, use_container_width=True, height=420)
-    
-    # Dışa aktar
-    create_section_header("Dışa Aktar")
-    render_export_buttons(top_sic, hf_t, df, aylik, yillik)
 
 def create_jumps_table(top_sic: pd.DataFrame) -> pd.DataFrame:
     """Sıçrama tablosu oluşturur."""
+    if len(top_sic) == 0:
+        return pd.DataFrame()
+        
     tbl = top_sic.copy().reset_index(drop=True)
     tbl.index = tbl.index + 1
     
@@ -2000,12 +1896,18 @@ def create_jumps_table(top_sic: pd.DataFrame) -> pd.DataFrame:
 
 def create_monthly_summary(sicramalar: pd.DataFrame) -> pd.DataFrame:
     """Aylık özet tablosu oluşturur."""
+    if len(sicramalar) == 0:
+        return pd.DataFrame()
+        
     aylik = sicramalar.groupby('Ay_Adi')['Abs_Degisim'].agg(['count', 'mean', 'max', 'min']).round(3)
     aylik.columns = ['Toplam', 'Ort. %', 'Maks %', 'Min %']
     return aylik
 
 def create_yearly_summary(sicramalar: pd.DataFrame) -> pd.DataFrame:
     """Yıllık özet tablosu oluşturur."""
+    if len(sicramalar) == 0:
+        return pd.DataFrame()
+        
     yillik = sicramalar.groupby('Yil').agg(
         Toplam=('Abs_Degisim', 'count'),
         Ort_Pct=('Abs_Degisim', 'mean'),
@@ -2018,6 +1920,9 @@ def create_yearly_summary(sicramalar: pd.DataFrame) -> pd.DataFrame:
 
 def create_weekly_summary_table(hf: pd.DataFrame) -> pd.DataFrame:
     """Haftalık özet tablosu oluşturur."""
+    if len(hf) == 0:
+        return pd.DataFrame()
+        
     hf_t = hf[['PztTarih', 'CumTarih', 'PztKur', 'CumKur', 'HaftaDegisim']].copy()
     hf_t.insert(0, 'Hafta', hf_t['PztTarih'].dt.strftime('%d.%m.%Y') + ' – ' + 
                 hf_t['CumTarih'].dt.strftime('%d.%m.%Y'))
@@ -2041,22 +1946,27 @@ def render_export_buttons(top_sic: pd.DataFrame, hf_t: pd.DataFrame,
     col1, col2 = st.columns(2)
     
     with col1:
-        csv = top_sic.to_csv(index=False).encode('utf-8-sig')
-        st.download_button(
-            "📥 CSV İndir (Sıçramalar)",
-            csv,
-            "sicramalar.csv",
-            "text/csv"
-        )
+        if len(top_sic) > 0:
+            csv = top_sic.to_csv(index=False).encode('utf-8-sig')
+            st.download_button(
+                "📥 CSV İndir (Sıçramalar)",
+                csv,
+                "sicramalar.csv",
+                "text/csv"
+            )
     
     with col2:
         buf = io.BytesIO()
         with pd.ExcelWriter(buf, engine='openpyxl') as w:
-            top_sic.to_excel(w, sheet_name='Sicramalar', index=False)
-            hf_t.to_excel(w, sheet_name='Haftalik', index=False)
+            if len(top_sic) > 0:
+                top_sic.to_excel(w, sheet_name='Sicramalar', index=False)
+            if len(hf_t) > 0:
+                hf_t.to_excel(w, sheet_name='Haftalik', index=False)
             df.to_excel(w, sheet_name='Tum_Veri', index=False)
-            aylik.to_excel(w, sheet_name='Aylik')
-            yillik.to_excel(w, sheet_name='Yillik')
+            if len(aylik) > 0:
+                aylik.to_excel(w, sheet_name='Aylik')
+            if len(yillik) > 0:
+                yillik.to_excel(w, sheet_name='Yillik')
         
         st.download_button(
             "📥 Excel İndir (Tüm Analiz)",
@@ -2079,8 +1989,11 @@ def style_dataframe(df: pd.DataFrame) -> pd.DataFrame:
                 pass
         return ''
     
+    # Sadece Değişim % sütunu varsa renklendir
+    subset = ['Değişim %'] if 'Değişim %' in df.columns else []
+    
     styled = (df.style
-        .applymap(color_row, subset=['Değişim %'] if 'Değişim %' in df.columns else [])
+        .applymap(color_row, subset=subset)
         .set_properties(**{
             'background-color': Theme.BG_SECONDARY,
             'color': '#8aa0bf',
@@ -2113,6 +2026,405 @@ def style_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         ]))
     
     return styled
+
+# =============================================================================
+# SIDEBAR BİLEŞENİ
+# =============================================================================
+def render_sidebar() -> Tuple[float, Any, str, int, float, int, str, List[str], float, Any]:
+    """Sidebar kontrollerini render eder."""
+    with st.sidebar:
+        st.markdown(f"""
+        <div style="font-family:'DM Mono',monospace;font-size:0.65rem;text-transform:uppercase;
+            letter-spacing:0.15em;color:{Theme.ACCENT_BLUE};padding:16px 0 12px 0;
+            border-bottom:1px solid {Theme.BORDER};">
+            ◈ Parametre Kontrolü
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        # Ana parametreler
+        esik = st.slider(
+            "📊 Günlük Sıçrama Eşiği (%)",
+            min_value=0.5,
+            max_value=10.0,
+            value=2.0,
+            step=0.1,
+            help="Bu eşiğin üzerindeki günlük değişimler 'sıçrama' olarak kabul edilir."
+        )
+        
+        gosterim_sec = st.selectbox(
+            "📋 Gösterilecek Sıçrama Sayısı",
+            options=[10, 20, 30, 50, 75, 100, "Tümü"],
+            index=2,
+            help="Tablolarda ve grafiklerde kaç sıçramanın gösterileceği."
+        )
+        
+        st.markdown(f"""
+        <div style="font-family:'DM Mono',monospace;font-size:0.65rem;text-transform:uppercase;
+            letter-spacing:0.15em;color:{Theme.ACCENT_BLUE};padding:20px 0 12px 0;
+            border-bottom:1px solid {Theme.BORDER};">
+            ◈ Sıçrama Yönü
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Yan yana radio butonları
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            tumu = st.button("🔄 Tümü", use_container_width=True)
+        with col2:
+            pozitif = st.button("↑ Pozitif", use_container_width=True)
+        with col3:
+            negatif = st.button("↓ Negatif", use_container_width=True)
+        
+        # Buton durumunu session_state'de tut
+        if 'yon' not in st.session_state:
+            st.session_state.yon = "Tümü"
+        
+        if tumu:
+            st.session_state.yon = "Tümü"
+        elif pozitif:
+            st.session_state.yon = "Yalnız Pozitif ↑"
+        elif negatif:
+            st.session_state.yon = "Yalnız Negatif ↓"
+        
+        yon = st.session_state.yon
+        
+        # Seçili yönü göster
+        yon_renk = {
+            "Tümü": Theme.TEXT_MUTED,
+            "Yalnız Pozitif ↑": Theme.ACCENT_GREEN,
+            "Yalnız Negatif ↓": Theme.ACCENT_RED
+        }.get(yon, Theme.TEXT_MUTED)
+        
+        st.markdown(f"""
+        <div style="text-align:center; padding:8px; margin:10px 0; 
+                    border:1px solid {yon_renk}; border-radius:6px;
+                    font-family:'DM Mono',monospace; font-size:0.8rem;
+                    color:{yon_renk};">
+            {yon}
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown(f"""
+        <div style="font-family:'DM Mono',monospace;font-size:0.65rem;text-transform:uppercase;
+            letter-spacing:0.15em;color:{Theme.ACCENT_BLUE};padding:20px 0 12px 0;
+            border-bottom:1px solid {Theme.BORDER};">
+            ◈ Etiket Ayarı
+        </div>
+        """, unsafe_allow_html=True)
+        
+        etiket_quantile = st.slider(
+            "🏷️ Etiketlenecek Dilim (%)",
+            min_value=10,
+            max_value=100,
+            value=40,
+            step=5,
+            help="En büyük sıçramaların yüzde kaçının grafikte etiketleneceği."
+        )
+        
+        st.markdown(f"""
+        <div style="font-family:'DM Mono',monospace;font-size:0.65rem;text-transform:uppercase;
+            letter-spacing:0.15em;color:{Theme.ACCENT_BLUE};padding:20px 0 12px 0;
+            border-bottom:1px solid {Theme.BORDER};">
+            ◈ Haftalık / Gün Analizi
+        </div>
+        """, unsafe_allow_html=True)
+        
+        haftalik_esik = st.slider(
+            "📈 Haftalık Sıçrama Eşiği (%)",
+            min_value=0.0,
+            max_value=20.0,
+            value=3.0,
+            step=0.5,
+            help="Haftalık değişimler için sıçrama eşiği."
+        )
+        
+        haftalik_etiket = st.slider(
+            "🏷️ Haftalık Etiket Dilimi (%)",
+            min_value=10,
+            max_value=100,
+            value=40,
+            step=5,
+            key="haftalik_etiket"
+        )
+        
+        # Haftalık yön butonları
+        st.markdown("**Haftalık Yön:**")
+        col_h1, col_h2, col_h3 = st.columns(3)
+        with col_h1:
+            h_tumu = st.button("🔄 Tümü", key="h_tumu", use_container_width=True)
+        with col_h2:
+            h_pozitif = st.button("↑ Pozitif", key="h_poz", use_container_width=True)
+        with col_h3:
+            h_negatif = st.button("↓ Negatif", key="h_neg", use_container_width=True)
+        
+        if 'haftalik_yon' not in st.session_state:
+            st.session_state.haftalik_yon = "Tümü"
+        
+        if h_tumu:
+            st.session_state.haftalik_yon = "Tümü"
+        elif h_pozitif:
+            st.session_state.haftalik_yon = "Yalnız Pozitif ↑"
+        elif h_negatif:
+            st.session_state.haftalik_yon = "Yalnız Negatif ↓"
+        
+        haftalik_yon = st.session_state.haftalik_yon
+        
+        gun_filtre = st.multiselect(
+            "📅 Gün Filtresi",
+            options=["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"],
+            default=[],
+            help="Analiz edilecek günleri filtreleyin."
+        )
+        
+        st.markdown(f"""
+        <div style="font-family:'DM Mono',monospace;font-size:0.65rem;text-transform:uppercase;
+            letter-spacing:0.15em;color:{Theme.ACCENT_BLUE};padding:20px 0 12px 0;
+            border-bottom:1px solid {Theme.BORDER};">
+            ◈ İleri Analiz
+        </div>
+        """, unsafe_allow_html=True)
+        
+        fwd_threshold = st.slider(
+            "🔮 Tetikleyici Eşik (%)",
+            min_value=0.5,
+            max_value=15.0,
+            value=3.0,
+            step=0.5,
+            help="İleri analiz için kullanılacak sıçrama eşiği."
+        )
+        
+        st.markdown(f"""
+        <div style="font-family:'DM Mono',monospace;font-size:0.65rem;text-transform:uppercase;
+            letter-spacing:0.15em;color:{Theme.ACCENT_BLUE};padding:20px 0 12px 0;
+            border-bottom:1px solid {Theme.BORDER};">
+            ◈ Veri Kaynağı
+        </div>
+        """, unsafe_allow_html=True)
+        
+        uploaded_file = st.file_uploader(
+            "📂 Excel Dosyası (.xlsx)",
+            type=['xlsx', 'xls'],
+            help="EVDS'den indirilen Excel dosyasını yükleyin."
+        )
+        
+        st.markdown(f"""
+        <div style="font-size:0.72rem;color:#3a5070;margin-top:8px;line-height:1.7;">
+            Sayfa: <span style="color:{Theme.ACCENT_BLUE_LIGHT};font-family:'DM Mono',monospace;">EVDS</span><br>
+            Sütun 1: <span style="color:{Theme.ACCENT_BLUE_LIGHT};font-family:'DM Mono',monospace;">Tarih (DD-MM-YYYY)</span><br>
+            Sütun 2: <span style="color:{Theme.ACCENT_BLUE_LIGHT};font-family:'DM Mono',monospace;">TP_DK_USD_A_YTL</span>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        return (esik, gosterim_sec, yon, etiket_quantile, haftalik_esik, 
+                haftalik_etiket, haftalik_yon, gun_filtre, fwd_threshold, uploaded_file)
+
+# =============================================================================
+# TAB İÇERİKLERİ
+# =============================================================================
+def render_tab1(df: pd.DataFrame, sicramalar: pd.DataFrame, pos_j: pd.DataFrame, 
+                neg_j: pd.DataFrame, esik: float, gosterim_sec: Any, 
+                etiket_quantile: int) -> None:
+    """Günlük Analiz tab'ını render eder."""
+    create_section_header("Dolar Kuru & Sıçrama Noktaları")
+    
+    # Fiyat grafiği
+    fig1 = create_price_chart(df, pos_j, neg_j, esik, gosterim_sec)
+    st.plotly_chart(fig1, use_container_width=True)
+    
+    # Günlük değişim grafiği
+    create_section_header("Günlük Değişim")
+    fig2 = create_daily_change_chart(df, pos_j, neg_j, esik, etiket_quantile)
+    st.plotly_chart(fig2, use_container_width=True)
+    
+    # Top 10 kartları
+    if len(sicramalar) > 0:
+        create_section_header("En Büyük 10 Sıçrama")
+        render_jump_cards(sicramalar)
+
+def render_tab2(df: pd.DataFrame, hf_global: pd.DataFrame, gun_filtre: List[str],
+                haftalik_esik: float, haftalik_etiket: int, haftalik_yon: str) -> None:
+    """Haftalık & Aylık Analiz tab'ını render eder."""
+    ALL_DAYS_TR = ['Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma']
+    aktif_gunler = gun_filtre if gun_filtre else ALL_DAYS_TR
+    
+    # Gün bazlı scatter
+    create_section_header("Günlük Değişim — Gün Bazlı Karşılaştırma")
+    fig_gd = create_daily_by_day_chart(df, aktif_gunler)
+    st.plotly_chart(fig_gd, use_container_width=True)
+    
+    # Gün istatistik kartları
+    create_section_header("Gün Bazlı İstatistikler")
+    render_day_stats_cards(df, aktif_gunler)
+    
+    # Violin grafiği
+    create_section_header("Dağılım Karşılaştırması (Violin)")
+    fig_vio = create_violin_chart(df, ALL_DAYS_TR)
+    st.plotly_chart(fig_vio, use_container_width=True)
+    
+    # Haftalık değişim
+    create_section_header("Haftalık Değişim — Pazartesi → Cuma")
+    fig_hw, _, _ = create_weekly_chart(hf_global, haftalik_esik, haftalik_yon, haftalik_etiket)
+    st.plotly_chart(fig_hw, use_container_width=True)
+    
+    # Haftalık KPI'lar
+    if len(hf_global) > 0:
+        render_weekly_kpis(hf_global, haftalik_esik)
+        
+        # Haftalık tablo
+        create_section_header("Haftalık Değişim Tablosu")
+        render_weekly_table(hf_global)
+    
+    # Aylık değişim ve volatilite
+    col_am1, col_am2 = st.columns(2)
+    with col_am1:
+        create_section_header("Aylık Değişim (21 Gün)")
+        fig_am = create_monthly_change_chart(df, aktif_gunler)
+        if fig_am.data:  # Eğer grafik boş değilse
+            st.plotly_chart(fig_am, use_container_width=True)
+    
+    with col_am2:
+        create_section_header("Yuvarlanmalı Volatilite")
+        fig_vol = create_volatility_chart(df)
+        st.plotly_chart(fig_vol, use_container_width=True)
+    
+    # Yıl-Ay ısı haritası
+    create_section_header("Yıl–Ay Ortalama Günlük Değişim (Isı Haritası)")
+    fig_heat = create_monthly_heatmap(df)
+    st.plotly_chart(fig_heat, use_container_width=True)
+
+def render_tab3(df: pd.DataFrame, fwd_threshold: float) -> None:
+    """İleri Analiz tab'ını render eder."""
+    create_section_header(f"Büyük Sıçramalardan Sonra Ne Oluyor? (≥%{fwd_threshold})")
+    
+    periods = [1, 5, 10, 21, 63]
+    period_labels = {1: '1G', 5: '5G (1Hf)', 10: '10G (2Hf)', 
+                     21: '21G (1Ay)', 63: '63G (3Ay)'}
+    
+    fwd = forward_analysis(df, fwd_threshold, periods)
+    
+    if not fwd:
+        st.warning(f"%{fwd_threshold} eşiğinde yeterli sıçrama bulunamadı.")
+        return
+    
+    # Forward kartları
+    cards_html = ""
+    for p in periods:
+        if p in fwd:
+            r = fwd[p]
+            if r['n'] > 0:
+                mean_cls = "metric-pos" if r['mean'] >= 0 else "metric-neg"
+                sign = "+" if r['mean'] >= 0 else ""
+                
+                cards_html += f"""
+                <div class="forward-card">
+                    <div class="forward-title">{period_labels[p]} Sonra</div>
+                    <div class="forward-big {mean_cls}">{sign}{r['mean']:.2f}%</div>
+                    <div class="forward-detail">
+                        <span style="color:#4a6080">Medyan:</span> 
+                        <span class="forward-accent">{'+' if r['median']>=0 else ''}{r['median']:.2f}%</span><br>
+                        <span style="color:#4a6080">Pozitif oran:</span> 
+                        <span class="forward-accent">%{r['pos_pct']:.0f}</span><br>
+                        <span style="color:#4a6080">IQR:</span> 
+                        <span class="forward-accent">{r['p25']:.2f}% — {r['p75']:.2f}%</span><br>
+                        <span style="color:#4a6080">Örnek:</span> 
+                        <span class="forward-accent">{r['n']}</span>
+                    </div>
+                </div>"""
+    
+    if cards_html:
+        st.markdown(f'<div class="forward-grid">{cards_html}</div>', unsafe_allow_html=True)
+    
+    # Box plot
+    create_section_header("Dağılım (Box Plot)")
+    fig_box = create_forward_boxplot(fwd, periods, period_labels)
+    if fig_box.data:
+        st.plotly_chart(fig_box, use_container_width=True)
+    
+    # Pozitif kapanış oranı
+    create_section_header("Pozitif Kapanış Oranı (Her Dönem)")
+    fig_win = create_win_rate_chart(fwd, periods, period_labels)
+    if fig_win.data:
+        st.plotly_chart(fig_win, use_container_width=True)
+    
+    # Eşik hassasiyeti
+    create_section_header("Eşik Hassasiyeti (21G Ort. Değişim vs Tetikleyici Eşik)")
+    fig_sens = create_threshold_sensitivity(df)
+    st.plotly_chart(fig_sens, use_container_width=True)
+
+def render_tab4(df: pd.DataFrame, sicramalar: pd.DataFrame) -> None:
+    """Dağılım & Isıtma tab'ını render eder."""
+    if len(sicramalar) == 0:
+        st.info("Sıçrama verisi bulunamadı.")
+        return
+        
+    col_l, col_r = st.columns(2)
+    
+    with col_l:
+        # Kümülatif sıçrama sayısı
+        create_section_header("Kümülatif Sıçrama Sayısı")
+        fig3 = create_cumulative_jumps_chart(sicramalar)
+        st.plotly_chart(fig3, use_container_width=True)
+        
+        # Aylara göre sıçrama
+        create_section_header("Aylara Göre Sıçrama")
+        fig4 = create_monthly_jumps_chart(sicramalar)
+        st.plotly_chart(fig4, use_container_width=True)
+    
+    with col_r:
+        # Büyüklük dağılımı
+        create_section_header("Büyüklük Dağılımı")
+        fig7 = create_magnitude_distribution_chart(sicramalar)
+        st.plotly_chart(fig7, use_container_width=True)
+        
+        # Yıl-Ay yoğunluk haritası
+        create_section_header("Yıl–Ay Yoğunluk Haritası")
+        fig8 = create_density_heatmap(sicramalar)
+        st.plotly_chart(fig8, use_container_width=True)
+    
+    # Haftalık pattern
+    create_section_header("Haftalık Pattern")
+    fig5 = create_weekly_pattern_chart(sicramalar)
+    st.plotly_chart(fig5, use_container_width=True)
+
+def render_tab5(df: pd.DataFrame, top_sic: pd.DataFrame, hf_global: pd.DataFrame,
+                sicramalar: pd.DataFrame) -> None:
+    """Tablolar tab'ını render eder."""
+    # Sıçrama tablosu
+    if len(top_sic) > 0:
+        create_section_header("Sıçrama Tablosu")
+        tbl_show = create_jumps_table(top_sic)
+        st.dataframe(tbl_show, use_container_width=True, height=420)
+    
+    # Özet tablolar
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        create_section_header("Aylık Özet")
+        aylik = create_monthly_summary(sicramalar)
+        if len(aylik) > 0:
+            st.dataframe(aylik, use_container_width=True)
+    
+    with col2:
+        create_section_header("Yıllık Özet")
+        yillik = create_yearly_summary(sicramalar)
+        if len(yillik) > 0:
+            st.dataframe(yillik, use_container_width=True)
+    
+    # Haftalık tablo
+    if len(hf_global) > 0:
+        create_section_header("Haftalık Değişim Tablosu (Pzt → Cum)")
+        hf_t = create_weekly_summary_table(hf_global)
+        if len(hf_t) > 0:
+            st.dataframe(hf_t, use_container_width=True, height=420)
+    
+    # Dışa aktar
+    create_section_header("Dışa Aktar")
+    aylik = create_monthly_summary(sicramalar)
+    yillik = create_yearly_summary(sicramalar)
+    hf_t = create_weekly_summary_table(hf_global) if len(hf_global) > 0 else pd.DataFrame()
+    render_export_buttons(top_sic, hf_t, df, aylik, yillik)
 
 # =============================================================================
 # ANA UYGULAMA
@@ -2164,9 +2476,14 @@ def main():
         sicramalar = df[df['Abs_Degisim'] >= esik].copy()
     
     sicramalar = sicramalar.sort_values('Abs_Degisim', ascending=False)
-    top_sic = sicramalar.head(int(gosterim_sec)) if gosterim_sec != "Tümü" else sicramalar.copy()
-    pos_j = top_sic[top_sic['Yuzde_Degisim'] > 0].copy()
-    neg_j = top_sic[top_sic['Yuzde_Degisim'] < 0].copy()
+    
+    if gosterim_sec != "Tümü":
+        top_sic = sicramalar.head(int(gosterim_sec)).copy()
+    else:
+        top_sic = sicramalar.copy()
+    
+    pos_j = top_sic[top_sic['Yuzde_Degisim'] > 0].copy() if len(top_sic) > 0 else pd.DataFrame()
+    neg_j = top_sic[top_sic['Yuzde_Degisim'] < 0].copy() if len(top_sic) > 0 else pd.DataFrame()
     
     # Haftalık veriyi hesapla
     hf_global = calculate_weekly_data(df)
