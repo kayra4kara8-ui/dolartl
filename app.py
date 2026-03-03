@@ -327,9 +327,9 @@ def veri_isle(raw):
 
     # Rolling returns
     df_indexed = df.set_index('Tarih')
-    df['Haftalik_Değişim'] = df_indexed['Dolar_Kuru'].pct_change(5).values * 100
-    df['Aylik_Değişim']    = df_indexed['Dolar_Kuru'].pct_change(21).values * 100
-    df['3Ay_Değişim']      = df_indexed['Dolar_Kuru'].pct_change(63).values * 100
+    df['Haftalik_Getiri'] = df_indexed['Dolar_Kuru'].pct_change(5).values * 100
+    df['Aylik_Getiri']    = df_indexed['Dolar_Kuru'].pct_change(21).values * 100
+    df['3Ay_Getiri']      = df_indexed['Dolar_Kuru'].pct_change(63).values * 100
 
     df['Hover_Tarih'] = df.apply(
         lambda r: f"{int(r['Tarih'].day)} {TR_AY_UZUN.get(r['Tarih'].month,'')} {int(r['Tarih'].year)}", axis=1)
@@ -923,24 +923,70 @@ with tab2:
     """, unsafe_allow_html=True)
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Aylık Değişim
-    st.markdown('<div class="section-label">◈ Aylık Değişim (21 Gün)</div>', unsafe_allow_html=True)
+    # ── Haftalık tablo
+    st.markdown('<div class="section-label">◈ Haftalık Değişim Tablosu</div>', unsafe_allow_html=True)
+
+    hf_tablo = hf[['PztTarih','CumTarih','PztKur','CumKur','HaftaDegisim']].copy()
+    hf_tablo['Hafta'] = hf_tablo['PztTarih'].dt.strftime('%d.%m.%Y') + ' – ' + hf_tablo['CumTarih'].dt.strftime('%d.%m.%Y')
+    hf_tablo['Yıl']   = hf_tablo['PztTarih'].dt.year
+    hf_tablo['Pzt Kur'] = hf_tablo['PztKur'].round(4)
+    hf_tablo['Cum Kur'] = hf_tablo['CumKur'].round(4)
+    hf_tablo['Değişim %'] = hf_tablo['HaftaDegisim'].round(3)
+    hf_tablo['Yön'] = hf_tablo['Değişim %'].apply(lambda x: '↑' if x > 0 else '↓')
+    hf_tablo = hf_tablo[['Yıl','Hafta','Pzt Kur','Cum Kur','Değişim %','Yön']].sort_values('Hafta', ascending=False).reset_index(drop=True)
+
+    def color_row(val):
+        if isinstance(val, float):
+            if val > 0:
+                return 'color: #00d4aa'
+            elif val < 0:
+                return 'color: #ff4d6a'
+        return ''
+
+    styled = (
+        hf_tablo.style
+        .applymap(color_row, subset=['Değişim %'])
+        .format({'Pzt Kur': '{:.4f}', 'Cum Kur': '{:.4f}', 'Değişim %': '{:+.3f}%'})
+        .set_properties(**{
+            'background-color': '#0d1220',
+            'color': '#8aa0bf',
+            'border': '1px solid #1e2d4a',
+            'font-family': 'DM Mono, monospace',
+            'font-size': '12px',
+        })
+        .set_table_styles([
+            {'selector': 'th', 'props': [
+                ('background-color', '#080c14'),
+                ('color', '#4a6080'),
+                ('font-family', 'DM Mono, monospace'),
+                ('font-size', '11px'),
+                ('text-transform', 'uppercase'),
+                ('letter-spacing', '0.08em'),
+                ('border', '1px solid #1e2d4a'),
+                ('padding', '8px 12px'),
+            ]},
+            {'selector': 'td', 'props': [('padding', '6px 12px')]},
+            {'selector': 'tr:hover td', 'props': [('background-color', '#131c2e')]},
+        ])
+    )
+    st.dataframe(styled, use_container_width=True, height=420)
+    st.markdown('<div class="section-label">◈ Aylık Getiri (21 Gün)</div>', unsafe_allow_html=True)
     col_am1, col_am2 = st.columns(2)
     with col_am1:
-        aylik_g = df.dropna(subset=['Aylik_Değişim']).copy()
+        aylik_g = df.dropna(subset=['Aylik_Getiri']).copy()
         aylik_g_filt = aylik_g[aylik_g['Gun_Adi_TR'].isin(aktif_gunler)] if gun_filtre else aylik_g
         aylik_g_filt = aylik_g_filt.copy()
-        aylik_g_filt['renk'] = aylik_g_filt['Aylik_Değişim'].apply(lambda x: '#4a9eff' if x >= 0 else '#ff4d6a')
+        aylik_g_filt['renk'] = aylik_g_filt['Aylik_Getiri'].apply(lambda x: '#4a9eff' if x >= 0 else '#ff4d6a')
         fig_am = go.Figure()
         fig_am.add_trace(go.Bar(
-            x=aylik_g_filt['Tarih'], y=aylik_g_filt['Aylik_Değişim'],
+            x=aylik_g_filt['Tarih'], y=aylik_g_filt['Aylik_Getiri'],
             marker_color=aylik_g_filt['renk'].values, opacity=0.8,
             customdata=aylik_g_filt['Gun_Adi_TR'],
             hovertemplate='%{x|%d.%m.%Y} (%{customdata})<br>21G: <b>%{y:.2f}%</b><extra></extra>'
         ))
         fig_am.add_hline(y=0, line_color='#1e2d4a', line_width=1)
         apply_base(fig_am, height=340,
-                   title=dict(text="21 GÜNLÜK (AYLIK) DEĞİŞİM", font=dict(size=11, color='#4a6080', family='DM Mono, monospace'), x=0),
+                   title=dict(text="21 GÜNLÜK (AYLIK) GETİRİ", font=dict(size=11, color='#4a6080', family='DM Mono, monospace'), x=0),
                    yaxis=dict(gridcolor='#131c2e', ticksuffix='%'),
                    xaxis=dict(gridcolor='#131c2e', tickformat='%b %Y'),
                    showlegend=False)
@@ -969,7 +1015,7 @@ with tab2:
         st.plotly_chart(fig_vol, use_container_width=True)
 
     # ── Yıl-Ay ısı haritası
-    st.markdown('<div class="section-label">◈ Yıl–Ay Ortalama Günlük Değişim (Isı Haritası)</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-label">◈ Yıl–Ay Ortalama Günlük Getiri (Isı Haritası)</div>', unsafe_allow_html=True)
     ay_pivot = df.groupby(['Yil', 'Ay'])['Yuzde_Degisim'].mean().unstack(fill_value=np.nan)
     ay_pivot.columns = [TR_AY.get(c, str(c)) for c in ay_pivot.columns]
     fig_heat = go.Figure(go.Heatmap(
@@ -985,7 +1031,7 @@ with tab2:
         colorbar=dict(ticksuffix='%', tickfont=dict(size=9, color='#4a6080'))
     ))
     apply_base(fig_heat, height=500,
-               title=dict(text="YIL–AY ORTALAMA GÜNLÜK DEĞİŞİM", font=dict(size=11, color='#4a6080', family='DM Mono, monospace'), x=0),
+               title=dict(text="YIL–AY ORTALAMA GÜNLÜK GETİRİ", font=dict(size=11, color='#4a6080', family='DM Mono, monospace'), x=0),
                xaxis=dict(side='bottom', tickfont=dict(size=11, color='#4a6080')),
                yaxis=dict(tickfont=dict(size=11, color='#4a6080'), autorange='reversed'))
     st.plotly_chart(fig_heat, use_container_width=True)
@@ -1039,7 +1085,7 @@ with tab3:
                 ))
         fig_box.add_hline(y=0, line_color='#1e2d4a', line_width=1, line_dash='dash')
         apply_base(fig_box, height=480,
-                   title=dict(text=f"%{fwd_threshold}+ SIÇRAMA SONRASI DEĞİŞİM DAĞILIMI", font=dict(size=11, color='#4a6080', family='DM Mono, monospace'), x=0),
+                   title=dict(text=f"%{fwd_threshold}+ SIÇRAMA SONRASI GETİRİ DAĞILIMI", font=dict(size=11, color='#4a6080', family='DM Mono, monospace'), x=0),
                    yaxis=dict(gridcolor='#131c2e', ticksuffix='%'),
                    xaxis=dict(gridcolor='#0d1220'))
         st.plotly_chart(fig_box, use_container_width=True)
@@ -1067,7 +1113,7 @@ with tab3:
         st.plotly_chart(fig_win, use_container_width=True)
 
         # Threshold sensitivity
-        st.markdown('<div class="section-label">◈ Eşik Hassasiyeti (21 Günlük Ort. Değişim vs Tetikleyici Eşik)</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-label">◈ Eşik Hassasiyeti (21 Günlük Ort. Getiri vs Tetikleyici Eşik)</div>', unsafe_allow_html=True)
         thresholds = np.arange(1.0, 12.0, 0.5)
         means_21 = []
         pct_pos_21 = []
@@ -1086,7 +1132,7 @@ with tab3:
         fig_sens = make_subplots(specs=[[{"secondary_y": True}]])
         fig_sens.add_trace(go.Scatter(
             x=thresholds, y=means_21,
-            mode='lines+markers', name='Ort. 21G Değişim',
+            mode='lines+markers', name='Ort. 21G Getiri',
             line=dict(color='#4a9eff', width=2),
             marker=dict(size=6),
             hovertemplate='Eşik: %{x:.1f}%<br>Ort. 21G: <b>%{y:.2f}%</b><extra></extra>'
@@ -1102,7 +1148,7 @@ with tab3:
             paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(13,18,32,0.9)',
             font=dict(color='#c9d4e8', family='DM Sans, sans-serif'),
             height=400,
-            title=dict(text="EŞİK HASSASIYETI — 21G ORTALAMA DEĞİŞİM", font=dict(size=11, color='#4a6080', family='DM Mono, monospace'), x=0),
+            title=dict(text="EŞİK HASSASIYETI — 21G ORTALAMA GETİRİ", font=dict(size=11, color='#4a6080', family='DM Mono, monospace'), x=0),
             legend=dict(bgcolor='rgba(13,18,32,0.8)', bordercolor='#1e2d4a'),
             hoverlabel=dict(bgcolor='#0d1220', font_size=12, font_color='#e8f0ff'),
             xaxis=dict(gridcolor='#131c2e', ticksuffix='%', tickfont=dict(size=10, color='#4a6080')),
@@ -1267,5 +1313,3 @@ st.markdown("""
     USDTRY ANALYSIS PLATFORM · STREAMLIT + PLOTLY
 </div>
 """, unsafe_allow_html=True)
-
-
