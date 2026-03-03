@@ -1329,3 +1329,4 @@ st.markdown("""
     USDTRY ANALYSIS PLATFORM · STREAMLIT + PLOTLY
 </div>
 """, unsafe_allow_html=True)
+
