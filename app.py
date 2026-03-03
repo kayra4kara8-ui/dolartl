@@ -230,10 +230,7 @@ else:
             """, unsafe_allow_html=True)
     
     st.markdown("<br>", unsafe_allow_html=True)
-    
-    # ─── GRAFİK 1: ANA DOLAR KURU ────────────────────────────────────────────
-    st.markdown(f'<div class="section-header"><h3 style="margin:0; color:#e2e8f0;">📈 Dolar Kuru Grafiği</h3></div>', unsafe_allow_html=True)
-    
+
     # Türkçe ay adları için yardımcı sözlük
     TR_AY = {1:'Oca',2:'Şub',3:'Mar',4:'Nis',5:'May',6:'Haz',
              7:'Tem',8:'Ağu',9:'Eyl',10:'Eki',11:'Kas',12:'Ara'}
@@ -242,13 +239,19 @@ else:
     TR_GUN = {'Monday':'Pazartesi','Tuesday':'Salı','Wednesday':'Çarşamba',
               'Thursday':'Perşembe','Friday':'Cuma','Saturday':'Cumartesi','Sunday':'Pazar'}
 
-    def format_hover(row):
-        ay = TR_AY_UZUN.get(int(row['Ay']), '')
-        gun_adi = TR_GUN.get(row['Gun_Adi'], row['Gun_Adi'])
-        return f"{int(row['Gun'])} {ay} {int(row['Yil'])} — {gun_adi}"
-
     # Hover metni önceden hesapla
     df['Hover_Tarih'] = df.apply(lambda r: f"{int(r['Tarih'].day)} {TR_AY_UZUN.get(r['Tarih'].month,'')} {int(r['Tarih'].year)}", axis=1)
+
+    pos_j = top_sicramalar[top_sicramalar['Yuzde_Degisim'] > 0].copy()
+    neg_j = top_sicramalar[top_sicramalar['Yuzde_Degisim'] < 0].copy()
+
+    if len(pos_j) > 0:
+        pos_j['_hover'] = pos_j.apply(lambda r: f"{int(r['Tarih'].day)} {TR_AY_UZUN.get(r['Tarih'].month,'')} {int(r['Tarih'].year)} — {TR_GUN.get(r['Gun_Adi'], r['Gun_Adi'])}", axis=1)
+    if len(neg_j) > 0:
+        neg_j['_hover'] = neg_j.apply(lambda r: f"{int(r['Tarih'].day)} {TR_AY_UZUN.get(r['Tarih'].month,'')} {int(r['Tarih'].year)} — {TR_GUN.get(r['Gun_Adi'], r['Gun_Adi'])}", axis=1)
+
+    # ─── GRAFİK 1: ANA DOLAR KURU ────────────────────────────────────────────
+    st.markdown(f'<div class="section-header"><h3 style="margin:0; color:#e2e8f0;">📈 Dolar Kuru Grafiği</h3></div>', unsafe_allow_html=True)
 
     fig1 = go.Figure()
     fig1.add_trace(go.Scatter(
@@ -259,12 +262,7 @@ else:
         hovertemplate='<b>%{text}</b><br>💲 Kur: <b>%{y:.4f}</b> ₺<extra></extra>'
     ))
     
-    pos_j = top_sicramalar[top_sicramalar['Yuzde_Degisim'] > 0].copy()
-    neg_j = top_sicramalar[top_sicramalar['Yuzde_Degisim'] < 0].copy()
-    
     if len(pos_j) > 0:
-        pos_j['_hover'] = pos_j.apply(lambda r: f"{int(r['Tarih'].day)} {TR_AY_UZUN.get(r['Tarih'].month,'')} {int(r['Tarih'].year)} — {TR_GUN.get(r['Gun_Adi'], r['Gun_Adi'])}", axis=1)
-        pos_j['_cd'] = list(zip(pos_j['Yuzde_Degisim'], pos_j['Onceki_Kur'], pos_j['Dolar_Kuru']))
         fig1.add_trace(go.Scatter(
             x=pos_j['Tarih'], y=pos_j['Dolar_Kuru'],
             mode='markers', name='📈 Pozitif Sıçrama',
@@ -285,7 +283,6 @@ else:
         ))
     
     if len(neg_j) > 0:
-        neg_j['_hover'] = neg_j.apply(lambda r: f"{int(r['Tarih'].day)} {TR_AY_UZUN.get(r['Tarih'].month,'')} {int(r['Tarih'].year)} — {TR_GUN.get(r['Gun_Adi'], r['Gun_Adi'])}", axis=1)
         fig1.add_trace(go.Scatter(
             x=neg_j['Tarih'], y=neg_j['Dolar_Kuru'],
             mode='markers', name='📉 Negatif Sıçrama',
@@ -345,26 +342,39 @@ else:
         text=df['Hover_Tarih'],
         hovertemplate='<b>%{text}</b><br>Değişim: %{y:.3f}%<extra></extra>'
     ))
+
     if len(pos_j) > 0:
+        pos_j['_etiket'] = pos_j.apply(
+            lambda r: f"{r['Tarih'].strftime('%d.%m.%Y')}  +{r['Yuzde_Degisim']:.2f}%", axis=1
+        )
         fig2.add_trace(go.Scatter(
             x=pos_j['Tarih'], y=pos_j['Yuzde_Degisim'],
-            mode='markers', name='📈 Pozitif',
-            marker=dict(color=tema['pos'], size=9, symbol='triangle-up',
+            mode='markers+text', name='📈 Pozitif',
+            marker=dict(color=tema['pos'], size=10, symbol='triangle-up',
                         line=dict(color='white', width=1)),
-            text=pos_j['_hover'],
+            text=pos_j['_etiket'],
+            textposition='top center',
+            textfont=dict(size=9, color=tema['pos']),
             customdata=pos_j['Yuzde_Degisim'],
             hovertemplate='<b>%{text}</b><br>📈 +%{customdata:.2f}%<extra></extra>'
         ))
+
     if len(neg_j) > 0:
+        neg_j['_etiket'] = neg_j.apply(
+            lambda r: f"{r['Tarih'].strftime('%d.%m.%Y')}  {r['Yuzde_Degisim']:.2f}%", axis=1
+        )
         fig2.add_trace(go.Scatter(
             x=neg_j['Tarih'], y=neg_j['Yuzde_Degisim'],
-            mode='markers', name='📉 Negatif',
-            marker=dict(color=tema['neg'], size=9, symbol='triangle-down',
+            mode='markers+text', name='📉 Negatif',
+            marker=dict(color=tema['neg'], size=10, symbol='triangle-down',
                         line=dict(color='white', width=1)),
-            text=neg_j['_hover'],
+            text=neg_j['_etiket'],
+            textposition='bottom center',
+            textfont=dict(size=9, color=tema['neg']),
             customdata=neg_j['Yuzde_Degisim'],
             hovertemplate='<b>%{text}</b><br>📉 %{customdata:.2f}%<extra></extra>'
         ))
+
     fig2.add_hline(y=esik, line_dash="dash", line_color=tema['pos'],
                    annotation_text=f"+{esik}%", annotation_font_color=tema['pos'])
     fig2.add_hline(y=-esik, line_dash="dash", line_color=tema['neg'],
@@ -373,7 +383,7 @@ else:
     fig2.update_layout(
         title=dict(text=f"GÜNLÜK YÜZDE DEĞİŞİMLER  |  %{esik} Eşiği",
                    font=dict(size=14, color='#e2e8f0'), x=0.01),
-        height=420, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(26,31,46,0.8)',
+        height=550, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(26,31,46,0.8)',
         font=dict(color='#e2e8f0'),
         xaxis=dict(gridcolor='#2d3748', tickformat='%b %Y', tickfont=dict(size=11, color='#a0aec0')),
         yaxis=dict(gridcolor='#2d3748', ticksuffix='%', tickfont=dict(size=11, color='#a0aec0')),
@@ -445,7 +455,6 @@ else:
         st.markdown('<div class="section-header"><h3 style="margin:0; color:#e2e8f0;">📅 Aylık Dağılım</h3></div>', unsafe_allow_html=True)
         ay_order_tr = ['Ocak','Şubat','Mart','Nisan','Mayıs','Haziran',
                         'Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık']
-        # Türkçe ay adı ekle
         sicramalar['Ay_Adi_TR'] = sicramalar['Ay'].map(TR_AY_UZUN)
         ay_sayim = sicramalar.groupby('Ay_Adi_TR').size().reindex(ay_order_tr).fillna(0)
         fig4 = go.Figure(go.Bar(
@@ -473,7 +482,6 @@ else:
         # GRAFİK 5: HAFTALIK PATTERN
         st.markdown('<div class="section-header"><h3 style="margin:0; color:#e2e8f0;">📆 Haftalık Pattern</h3></div>', unsafe_allow_html=True)
         gun_order_tr = ['Pazartesi','Salı','Çarşamba','Perşembe','Cuma','Cumartesi','Pazar']
-        gun_order_en = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']
         sicramalar['Gun_Adi_TR'] = sicramalar['Gun_Adi'].map(TR_GUN)
         gun_sayim = sicramalar.groupby('Gun_Adi_TR').size().reindex(gun_order_tr).fillna(0)
         fig5 = go.Figure(go.Bar(
@@ -642,4 +650,3 @@ st.markdown("""
     💹 Dolar Kuru Sıçrama Analizi | Powered by Streamlit + Plotly
 </div>
 """, unsafe_allow_html=True)
-
