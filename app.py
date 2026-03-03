@@ -529,6 +529,22 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
+# ─── HAFTALIK VERİ (global — tab2 ve tab5'te kullanılır) ─────────────────────
+df['ISOYil']   = df['Tarih'].dt.isocalendar().year.astype(int)
+df['ISOHafta'] = df['Tarih'].dt.isocalendar().week.astype(int)
+_hf_ilk = df.groupby(['ISOYil','ISOHafta']).agg(
+    PztTarih=('Tarih','min'), PztKur=('Dolar_Kuru','first')
+).reset_index()
+_hf_son = df.groupby(['ISOYil','ISOHafta']).agg(
+    CumTarih=('Tarih','max'), CumKur=('Dolar_Kuru','last')
+).reset_index()
+hf_global = _hf_ilk.merge(_hf_son, on=['ISOYil','ISOHafta'])
+hf_global['HaftaDegisim'] = (hf_global['CumKur'] / hf_global['PztKur'] - 1) * 100
+hf_global['XTarih']       = hf_global['CumTarih']
+hf_global['Aralik']       = hf_global['PztTarih'].dt.strftime('%d.%m') + '–' + hf_global['CumTarih'].dt.strftime('%d.%m.%y')
+hf_global['AbsDegisim']   = hf_global['HaftaDegisim'].abs()
+hf_global = hf_global.dropna(subset=['HaftaDegisim']).reset_index(drop=True)
+
 # ─── TABS ─────────────────────────────────────────────────────────────────────
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "GÜNLÜK ANALİZ",
@@ -784,21 +800,7 @@ with tab2:
     # ── Haftalık değişim: Pazartesi → Cuma, haftada bir nokta
     st.markdown('<div class="section-label">◈ Haftalık Değişim — Pazartesi → Cuma</div>', unsafe_allow_html=True)
 
-    df['ISOYil']   = df['Tarih'].dt.isocalendar().year.astype(int)
-    df['ISOHafta'] = df['Tarih'].dt.isocalendar().week.astype(int)
-
-    hf_ilk = df.groupby(['ISOYil','ISOHafta']).agg(
-        PztTarih=('Tarih','min'), PztKur=('Dolar_Kuru','first')
-    ).reset_index()
-    hf_son = df.groupby(['ISOYil','ISOHafta']).agg(
-        CumTarih=('Tarih','max'), CumKur=('Dolar_Kuru','last')
-    ).reset_index()
-    hf = hf_ilk.merge(hf_son, on=['ISOYil','ISOHafta'])
-    hf['HaftaDegisim']  = (hf['CumKur'] / hf['PztKur'] - 1) * 100
-    hf['XTarih']        = hf['CumTarih']
-    hf['Aralik']        = hf['PztTarih'].dt.strftime('%d.%m') + '–' + hf['CumTarih'].dt.strftime('%d.%m.%y')
-    hf['AbsDegisim']    = hf['HaftaDegisim'].abs()
-    hf = hf.dropna(subset=['HaftaDegisim']).reset_index(drop=True)
+    hf = hf_global.copy()
 
     # Yön filtresi
     if haftalik_yon == "Yalnız Pozitif ↑":
@@ -1289,6 +1291,19 @@ with tab5:
         yillik.columns = ['Toplam','Ort. %','Pozitif','Negatif','Maks %']
         st.dataframe(yillik, use_container_width=True)
 
+    # Haftalık tablo
+    st.markdown('<div class="section-label">◈ Haftalık Değişim Tablosu (Pzt → Cum)</div>', unsafe_allow_html=True)
+    hf_t = hf_global[['PztTarih','CumTarih','PztKur','CumKur','HaftaDegisim']].copy()
+    hf_t.insert(0, 'Hafta', hf_t['PztTarih'].dt.strftime('%d.%m.%Y') + ' – ' + hf_t['CumTarih'].dt.strftime('%d.%m.%Y'))
+    hf_t.insert(0, 'Yıl', hf_t['PztTarih'].dt.year)
+    hf_t['Pzt Kur'] = hf_t['PztKur'].round(4)
+    hf_t['Cum Kur'] = hf_t['CumKur'].round(4)
+    hf_t['Değişim %'] = hf_t['HaftaDegisim'].round(3)
+    hf_t['Yön'] = hf_t['Değişim %'].apply(lambda x: '↑' if x > 0 else '↓')
+    hf_t = hf_t[['Yıl','Hafta','Pzt Kur','Cum Kur','Değişim %','Yön']].sort_values('Hafta', ascending=False).reset_index(drop=True)
+    hf_t.index = hf_t.index + 1
+    st.dataframe(hf_t, use_container_width=True, height=420)
+
     # Downloads
     st.markdown('<div class="section-label">◈ Dışa Aktar</div>', unsafe_allow_html=True)
     dc1, dc2 = st.columns(2)
@@ -1299,6 +1314,7 @@ with tab5:
         buf = io.BytesIO()
         with pd.ExcelWriter(buf, engine='openpyxl') as w:
             top_sic.to_excel(w, sheet_name='Sicramalar', index=False)
+            hf_t.to_excel(w, sheet_name='Haftalik', index=False)
             df.to_excel(w, sheet_name='Tum_Veri', index=False)
             aylik.to_excel(w, sheet_name='Aylik')
             yillik.to_excel(w, sheet_name='Yillik')
