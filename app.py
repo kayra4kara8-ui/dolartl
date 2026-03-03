@@ -409,6 +409,38 @@ def veri_isle(raw):
 
     return df, cleaned
 
+def safe_ticks(min_val, max_val, n=8, suffix='', decimals=2, is_kur=False):
+    """
+    Güvenli tick hesaplayıcı. NaN/inf/sıfır aralık durumlarını handle eder.
+    Döndürür: (tickvals_list, ticktext_list)
+    """
+    try:
+        mn = float(min_val)
+        mx = float(max_val)
+        if not (np.isfinite(mn) and np.isfinite(mx)):
+            return None, None
+        if mx <= mn:
+            mx = mn + 1
+        aralik = (mx - mn) / n
+        if aralik <= 0 or not np.isfinite(aralik):
+            aralik = 1.0
+        # Yuvarla güzel sayıya
+        mag = 10 ** np.floor(np.log10(aralik))
+        aralik = np.ceil(aralik / mag) * mag
+        start = np.floor(mn / aralik) * aralik
+        ticks = np.arange(start, mx + aralik, aralik)
+        ticks = ticks[np.isfinite(ticks)]
+        if len(ticks) == 0:
+            return None, None
+        if is_kur:
+            texts = [f"{f'{v:.{decimals}f}'.replace('.', ',')} ₺" for v in ticks]
+        else:
+            texts = [f"{f'{v:.{decimals}f}'.replace('.', ',')}{suffix}" for v in ticks]
+        return ticks.tolist(), texts
+    except Exception:
+        return None, None
+
+
 def forward_analysis(df, threshold, periods):
     events = df[df['Abs_Degisim'] >= threshold].copy()
     results = {}
