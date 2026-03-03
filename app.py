@@ -940,7 +940,7 @@ with tab2:
         ))
         fig_am.add_hline(y=0, line_color='#1e2d4a', line_width=1)
         apply_base(fig_am, height=340,
-                   title=dict(text="21 GÜNLÜK (AYLIK) GETİRİ", font=dict(size=11, color='#4a6080', family='DM Mono, monospace'), x=0),
+                   title=dict(text="21 GÜNLÜK (AYLIK) DEĞİŞİM", font=dict(size=11, color='#4a6080', family='DM Mono, monospace'), x=0),
                    yaxis=dict(gridcolor='#131c2e', ticksuffix='%'),
                    xaxis=dict(gridcolor='#131c2e', tickformat='%b %Y'),
                    showlegend=False)
@@ -985,7 +985,7 @@ with tab2:
         colorbar=dict(ticksuffix='%', tickfont=dict(size=9, color='#4a6080'))
     ))
     apply_base(fig_heat, height=500,
-               title=dict(text="YIL–AY ORTALAMA GÜNLÜK GETİRİ", font=dict(size=11, color='#4a6080', family='DM Mono, monospace'), x=0),
+               title=dict(text="YIL–AY ORTALAMA GÜNLÜK DEĞİŞİM", font=dict(size=11, color='#4a6080', family='DM Mono, monospace'), x=0),
                xaxis=dict(side='bottom', tickfont=dict(size=11, color='#4a6080')),
                yaxis=dict(tickfont=dict(size=11, color='#4a6080'), autorange='reversed'))
     st.plotly_chart(fig_heat, use_container_width=True)
@@ -1039,7 +1039,7 @@ with tab3:
                 ))
         fig_box.add_hline(y=0, line_color='#1e2d4a', line_width=1, line_dash='dash')
         apply_base(fig_box, height=480,
-                   title=dict(text=f"%{fwd_threshold}+ SIÇRAMA SONRASI GETİRİ DAĞILIMI", font=dict(size=11, color='#4a6080', family='DM Mono, monospace'), x=0),
+                   title=dict(text=f"%{fwd_threshold}+ SIÇRAMA SONRASI DEĞİŞİM DAĞILIMI", font=dict(size=11, color='#4a6080', family='DM Mono, monospace'), x=0),
                    yaxis=dict(gridcolor='#131c2e', ticksuffix='%'),
                    xaxis=dict(gridcolor='#0d1220'))
         st.plotly_chart(fig_box, use_container_width=True)
@@ -1102,7 +1102,7 @@ with tab3:
             paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(13,18,32,0.9)',
             font=dict(color='#c9d4e8', family='DM Sans, sans-serif'),
             height=400,
-            title=dict(text="EŞİK HASSASIYETI — 21G ORTALAMA GETİRİ", font=dict(size=11, color='#4a6080', family='DM Mono, monospace'), x=0),
+            title=dict(text="EŞİK HASSASIYETI — 21G ORTALAMA DEĞİŞİM", font=dict(size=11, color='#4a6080', family='DM Mono, monospace'), x=0),
             legend=dict(bgcolor='rgba(13,18,32,0.8)', bordercolor='#1e2d4a'),
             hoverlabel=dict(bgcolor='#0d1220', font_size=12, font_color='#e8f0ff'),
             xaxis=dict(gridcolor='#131c2e', ticksuffix='%', tickfont=dict(size=10, color='#4a6080')),
@@ -1267,3 +1267,4 @@ st.markdown("""
     USDTRY ANALYSIS PLATFORM · STREAMLIT + PLOTLY
 </div>
 """, unsafe_allow_html=True)
+
