@@ -398,6 +398,22 @@ with st.sidebar:
     st.markdown("""
     <div style="font-family:'DM Mono',monospace; font-size:0.65rem; text-transform:uppercase;
                 letter-spacing:0.15em; color:#1b6cf2; padding:20px 0 12px 0; border-bottom:1px solid #1e2d4a;">
+        ◈ Haftalık / Gün Analizi
+    </div>
+    """, unsafe_allow_html=True)
+    st.markdown("<br>", unsafe_allow_html=True)
+    haftalik_esik = st.slider("Haftalık Değişim Eşiği (%)", 0.0, 20.0, 3.0, 0.5,
+                               help="Haftalık getiri grafiğinde vurgulanacak eşik")
+    gun_filtre = st.multiselect(
+        "Gün Filtresi (boş = tümü)",
+        ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"],
+        default=[],
+        help="Seçili günlerin değişimlerini ayrı analiz et"
+    )
+
+    st.markdown("""
+    <div style="font-family:'DM Mono',monospace; font-size:0.65rem; text-transform:uppercase;
+                letter-spacing:0.15em; color:#1b6cf2; padding:20px 0 12px 0; border-bottom:1px solid #1e2d4a;">
         ◈ İleri Analiz
     </div>
     """, unsafe_allow_html=True)
@@ -637,73 +653,227 @@ with tab1:
 
 # ════════════ TAB 2 ════════════
 with tab2:
-    st.markdown('<div class="section-label">◈ Haftalık & Aylık Getiri Analizi</div>', unsafe_allow_html=True)
+    # ── Gün renk paleti
+    GUN_COLORS = {
+        'Pazartesi': '#4a9eff',
+        'Salı':      '#b794f4',
+        'Çarşamba':  '#f6ad55',
+        'Perşembe':  '#00d4aa',
+        'Cuma':      '#ff4d6a',
+    }
+    EN_GUN = {'Pazartesi':'Monday','Salı':'Tuesday','Çarşamba':'Wednesday',
+              'Perşembe':'Thursday','Cuma':'Friday'}
+    ALL_DAYS_TR = ['Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma']
 
-    col1, col2 = st.columns(2)
-    with col1:
-        # Weekly returns
-        haftalik = df.dropna(subset=['Haftalik_Getiri']).copy()
-        haftalik['renk'] = haftalik['Haftalik_Getiri'].apply(lambda x: '#00d4aa' if x >= 0 else '#ff4d6a')
-        fig_h = go.Figure()
-        fig_h.add_trace(go.Bar(
-            x=haftalik['Tarih'], y=haftalik['Haftalik_Getiri'],
-            marker_color=haftalik['renk'].values,
-            opacity=0.8,
-            hovertemplate='%{x|%d.%m.%Y}<br>5 Günlük: <b>%{y:.2f}%</b><extra></extra>'
+    df['Gun_Adi_TR'] = df['Gun_Adi'].map(TR_GUN)
+
+    # ── Seçili günler (boşsa tümü)
+    aktif_gunler = gun_filtre if gun_filtre else ALL_DAYS_TR
+    df_gun = df[df['Gun_Adi_TR'].isin(aktif_gunler)].copy()
+
+    # ── PAZARTESİ vs CUMA karşılaştırması (ana bölüm)
+    st.markdown('<div class="section-label">◈ Günlük Değişim — Gün Bazlı Karşılaştırma</div>', unsafe_allow_html=True)
+
+    # Scatter: tüm günler üst üste bindirilmiş çizgi + scatter
+    fig_gd = go.Figure()
+    # arka plan çizgi
+    fig_gd.add_trace(go.Scatter(
+        x=df['Tarih'], y=df['Yuzde_Degisim'],
+        mode='lines', name='Tüm Günler',
+        line=dict(color='#1e2d4a', width=0.7), opacity=0.5,
+        hoverinfo='skip', showlegend=False
+    ))
+    for gun_tr in aktif_gunler:
+        sub = df[df['Gun_Adi_TR'] == gun_tr].copy()
+        color = GUN_COLORS.get(gun_tr, '#c9d4e8')
+        fig_gd.add_trace(go.Scatter(
+            x=sub['Tarih'], y=sub['Yuzde_Degisim'],
+            mode='markers', name=gun_tr,
+            marker=dict(color=color, size=5, opacity=0.85,
+                        line=dict(color='rgba(0,0,0,0.3)', width=0.5)),
+            customdata=list(zip(sub['Yuzde_Degisim'], sub['Dolar_Kuru'], sub['Onceki_Kur'])),
+            hovertemplate=(
+                f'<b>{gun_tr}</b> — %{{x|%d.%m.%Y}}<br>'
+                'Değişim: <b>%{customdata[0]:.3f}%</b><br>'
+                'Kur: %{customdata[2]:.4f} → %{customdata[1]:.4f} ₺<extra></extra>'
+            )
         ))
-        fig_h.add_hline(y=0, line_color='#1e2d4a', line_width=1)
-        apply_base(fig_h, height=360,
-                   title=dict(text="5 GÜNLÜK (HAFTALIK) GETİRİ", font=dict(size=11, color='#4a6080', family='DM Mono, monospace'), x=0),
+    fig_gd.add_hline(y=0, line_color='#2a4a7a', line_width=1)
+    apply_base(fig_gd, height=460,
+               title=dict(text=f"GÜN BAZLI DEĞİŞİM DAĞILIMI — {', '.join(aktif_gunler)}", font=dict(size=11, color='#4a6080', family='DM Mono, monospace'), x=0),
+               xaxis=dict(gridcolor='#131c2e', tickformat='%b %Y'),
+               yaxis=dict(gridcolor='#131c2e', ticksuffix='%'),
+               hovermode='closest')
+    st.plotly_chart(fig_gd, use_container_width=True)
+
+    # ── Gün istatistik kartları
+    st.markdown('<div class="section-label">◈ Gün Bazlı İstatistikler</div>', unsafe_allow_html=True)
+    kart_cols = st.columns(len(aktif_gunler))
+    for i, gun_tr in enumerate(aktif_gunler):
+        sub = df[df['Gun_Adi_TR'] == gun_tr]
+        ort  = sub['Yuzde_Degisim'].mean()
+        std  = sub['Yuzde_Degisim'].std()
+        maks = sub['Yuzde_Degisim'].max()
+        mins = sub['Yuzde_Degisim'].min()
+        poz  = (sub['Yuzde_Degisim'] > 0).mean() * 100
+        color = GUN_COLORS.get(gun_tr, '#4a9eff')
+        sign = "+" if ort >= 0 else ""
+        ort_cls = "metric-pos" if ort >= 0 else "metric-neg"
+        with kart_cols[i]:
+            st.markdown(f"""
+            <div class="metric-card" style="border-top: 2px solid {color};">
+              <div class="metric-label" style="color:{color};">{gun_tr}</div>
+              <div class="metric-value {ort_cls}">{sign}{ort:.3f}%</div>
+              <div class="metric-sub">Ort. günlük değişim</div>
+              <div style="margin-top:10px; font-size:0.72rem; color:#3a5070; font-family:'DM Mono',monospace; line-height:1.8;">
+                <span style="color:#4a6080">Std:</span> <span style="color:{color}">±{std:.3f}%</span><br>
+                <span style="color:#4a6080">Max:</span> <span style="color:#00d4aa">+{maks:.2f}%</span><br>
+                <span style="color:#4a6080">Min:</span> <span style="color:#ff4d6a">{mins:.2f}%</span><br>
+                <span style="color:#4a6080">Poz. oran:</span> <span style="color:{color}">%{poz:.0f}</span>
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── Violin / box: gün bazlı dağılım
+    st.markdown('<div class="section-label">◈ Dağılım Karşılaştırması (Violin)</div>', unsafe_allow_html=True)
+    fig_vio = go.Figure()
+    for gun_tr in ALL_DAYS_TR:
+        sub = df[df['Gun_Adi_TR'] == gun_tr]
+        color = GUN_COLORS.get(gun_tr, '#4a9eff')
+        fig_vio.add_trace(go.Violin(
+            y=sub['Yuzde_Degisim'], name=gun_tr,
+            line_color=color,
+            fillcolor=f'rgba({int(color[1:3],16)},{int(color[3:5],16)},{int(color[5:7],16)},0.12)',
+            meanline_visible=True, box_visible=True,
+            points='outliers',
+            hovertemplate=f'<b>{gun_tr}</b><br>%{{y:.3f}}%<extra></extra>'
+        ))
+    fig_vio.add_hline(y=0, line_color='#2a4a7a', line_dash='dash', line_width=1)
+    apply_base(fig_vio, height=460,
+               title=dict(text="GÜN BAZLI DEĞİŞİM — VİOLİN", font=dict(size=11, color='#4a6080', family='DM Mono, monospace'), x=0),
+               yaxis=dict(gridcolor='#131c2e', ticksuffix='%'),
+               xaxis=dict(gridcolor='#0d1220'))
+    st.plotly_chart(fig_vio, use_container_width=True)
+
+    # ── Haftalık getiri (Cuma kapanışından Cuma'ya = gerçek haftalık)
+    st.markdown('<div class="section-label">◈ Haftalık Getiri Analizi</div>', unsafe_allow_html=True)
+
+    col_hw1, col_hw2 = st.columns([2, 1])
+    with col_hw1:
+        haftalik = df.dropna(subset=['Haftalik_Getiri']).copy()
+        haftalik['renk'] = haftalik.apply(
+            lambda r: GUN_COLORS.get(r['Gun_Adi_TR'], '#4a9eff') if gun_filtre
+                      else ('#00d4aa' if r['Haftalik_Getiri'] >= haftalik_esik
+                            else '#ff4d6a' if r['Haftalik_Getiri'] <= -haftalik_esik
+                            else '#2a4a7a'), axis=1
+        )
+        haftalik_filt = haftalik[haftalik['Gun_Adi_TR'].isin(aktif_gunler)] if gun_filtre else haftalik
+        fig_hw = go.Figure()
+        fig_hw.add_trace(go.Bar(
+            x=haftalik_filt['Tarih'], y=haftalik_filt['Haftalik_Getiri'],
+            marker_color=haftalik_filt['renk'].values,
+            opacity=0.85,
+            customdata=haftalik_filt['Gun_Adi_TR'],
+            hovertemplate='%{x|%d.%m.%Y} (%{customdata})<br>5G Getiri: <b>%{y:.2f}%</b><extra></extra>'
+        ))
+        fig_hw.add_hline(y=haftalik_esik, line_dash="dash",
+                         line_color='rgba(0,212,170,0.5)', line_width=1,
+                         annotation_text=f"+{haftalik_esik}%",
+                         annotation_font_color='#00d4aa', annotation_font_size=9)
+        fig_hw.add_hline(y=-haftalik_esik, line_dash="dash",
+                         line_color='rgba(255,77,106,0.5)', line_width=1,
+                         annotation_text=f"-{haftalik_esik}%",
+                         annotation_font_color='#ff4d6a', annotation_font_size=9)
+        fig_hw.add_hline(y=0, line_color='#1e2d4a', line_width=1)
+        apply_base(fig_hw, height=380,
+                   title=dict(text=f"5 GÜNLÜK GETİRİ  ·  Eşik ±%{haftalik_esik}", font=dict(size=11, color='#4a6080', family='DM Mono, monospace'), x=0),
                    yaxis=dict(gridcolor='#131c2e', ticksuffix='%'),
                    xaxis=dict(gridcolor='#131c2e', tickformat='%b %Y'),
                    showlegend=False)
-        st.plotly_chart(fig_h, use_container_width=True)
+        st.plotly_chart(fig_hw, use_container_width=True)
 
-    with col2:
-        # Monthly returns
+    with col_hw2:
+        # Haftalık eşik istatistikleri
+        hf = df.dropna(subset=['Haftalik_Getiri'])
+        hf_pos = (hf['Haftalik_Getiri'] >= haftalik_esik).sum()
+        hf_neg = (hf['Haftalik_Getiri'] <= -haftalik_esik).sum()
+        hf_ort = hf['Haftalik_Getiri'].mean()
+        hf_maks = hf['Haftalik_Getiri'].max()
+        hf_mins = hf['Haftalik_Getiri'].min()
+        sign_hf = "+" if hf_ort >= 0 else ""
+        st.markdown(f"""
+        <div style="display:flex; flex-direction:column; gap:10px; margin-top:40px;">
+          <div class="metric-card" style="border-top:2px solid #4a9eff;">
+            <div class="metric-label">Haftalık Ort.</div>
+            <div class="metric-value metric-{'pos' if hf_ort>=0 else 'neg'}">{sign_hf}{hf_ort:.3f}%</div>
+          </div>
+          <div class="metric-card" style="border-top:2px solid #00d4aa;">
+            <div class="metric-label">≥ %{haftalik_esik} hafta</div>
+            <div class="metric-value metric-pos">{hf_pos}</div>
+            <div class="metric-sub">pozitif büyük hafta</div>
+          </div>
+          <div class="metric-card" style="border-top:2px solid #ff4d6a;">
+            <div class="metric-label">≤ -%{haftalik_esik} hafta</div>
+            <div class="metric-value metric-neg">{hf_neg}</div>
+            <div class="metric-sub">negatif büyük hafta</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-label">Max / Min</div>
+            <div class="metric-value"><span class="metric-pos">+{hf_maks:.2f}%</span></div>
+            <div class="metric-sub metric-neg">{hf_mins:.2f}%</div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # ── Aylık getiri
+    st.markdown('<div class="section-label">◈ Aylık Getiri (21 Gün)</div>', unsafe_allow_html=True)
+    col_am1, col_am2 = st.columns(2)
+    with col_am1:
         aylik_g = df.dropna(subset=['Aylik_Getiri']).copy()
-        aylik_g['renk'] = aylik_g['Aylik_Getiri'].apply(lambda x: '#4a9eff' if x >= 0 else '#ff4d6a')
-        fig_a = go.Figure()
-        fig_a.add_trace(go.Bar(
-            x=aylik_g['Tarih'], y=aylik_g['Aylik_Getiri'],
-            marker_color=aylik_g['renk'].values,
-            opacity=0.8,
-            hovertemplate='%{x|%d.%m.%Y}<br>21 Günlük: <b>%{y:.2f}%</b><extra></extra>'
+        aylik_g_filt = aylik_g[aylik_g['Gun_Adi_TR'].isin(aktif_gunler)] if gun_filtre else aylik_g
+        aylik_g_filt = aylik_g_filt.copy()
+        aylik_g_filt['renk'] = aylik_g_filt['Aylik_Getiri'].apply(lambda x: '#4a9eff' if x >= 0 else '#ff4d6a')
+        fig_am = go.Figure()
+        fig_am.add_trace(go.Bar(
+            x=aylik_g_filt['Tarih'], y=aylik_g_filt['Aylik_Getiri'],
+            marker_color=aylik_g_filt['renk'].values, opacity=0.8,
+            customdata=aylik_g_filt['Gun_Adi_TR'],
+            hovertemplate='%{x|%d.%m.%Y} (%{customdata})<br>21G: <b>%{y:.2f}%</b><extra></extra>'
         ))
-        fig_a.add_hline(y=0, line_color='#1e2d4a', line_width=1)
-        apply_base(fig_a, height=360,
+        fig_am.add_hline(y=0, line_color='#1e2d4a', line_width=1)
+        apply_base(fig_am, height=340,
                    title=dict(text="21 GÜNLÜK (AYLIK) GETİRİ", font=dict(size=11, color='#4a6080', family='DM Mono, monospace'), x=0),
                    yaxis=dict(gridcolor='#131c2e', ticksuffix='%'),
                    xaxis=dict(gridcolor='#131c2e', tickformat='%b %Y'),
                    showlegend=False)
-        st.plotly_chart(fig_a, use_container_width=True)
+        st.plotly_chart(fig_am, use_container_width=True)
 
-    # Rolling volatility
-    st.markdown('<div class="section-label">◈ Volatilite (Yuvarlanmalı Standart Sapma)</div>', unsafe_allow_html=True)
-    df['Vol_20'] = df['Yuzde_Degisim'].rolling(20).std()
-    df['Vol_60'] = df['Yuzde_Degisim'].rolling(60).std()
-    fig_vol = go.Figure()
-    fig_vol.add_trace(go.Scatter(
-        x=df['Tarih'], y=df['Vol_20'],
-        mode='lines', name='20-gün vol',
-        line=dict(color='#4a9eff', width=1.5),
-        fill='tozeroy', fillcolor='rgba(74,158,255,0.05)',
-        hovertemplate='%{x|%d.%m.%Y}<br>20G Vol: <b>%{y:.3f}%</b><extra></extra>'
-    ))
-    fig_vol.add_trace(go.Scatter(
-        x=df['Tarih'], y=df['Vol_60'],
-        mode='lines', name='60-gün vol',
-        line=dict(color='#ff4d6a', width=1.5, dash='dot'),
-        hovertemplate='%{x|%d.%m.%Y}<br>60G Vol: <b>%{y:.3f}%</b><extra></extra>'
-    ))
-    apply_base(fig_vol, height=380,
-               title=dict(text="YUVARLANMALI VOLATİLİTE (Günlük Std. Sapma)", font=dict(size=11, color='#4a6080', family='DM Mono, monospace'), x=0),
-               yaxis=dict(gridcolor='#131c2e', ticksuffix='%'),
-               xaxis=dict(gridcolor='#131c2e', tickformat='%b %Y'))
-    st.plotly_chart(fig_vol, use_container_width=True)
+    with col_am2:
+        # Volatilite
+        df['Vol_20'] = df['Yuzde_Degisim'].rolling(20).std()
+        df['Vol_60'] = df['Yuzde_Degisim'].rolling(60).std()
+        fig_vol = go.Figure()
+        fig_vol.add_trace(go.Scatter(
+            x=df['Tarih'], y=df['Vol_20'], mode='lines', name='20G Vol',
+            line=dict(color='#4a9eff', width=1.5),
+            fill='tozeroy', fillcolor='rgba(74,158,255,0.05)',
+            hovertemplate='%{x|%d.%m.%Y}<br>20G: <b>%{y:.3f}%</b><extra></extra>'
+        ))
+        fig_vol.add_trace(go.Scatter(
+            x=df['Tarih'], y=df['Vol_60'], mode='lines', name='60G Vol',
+            line=dict(color='#ff4d6a', width=1.2, dash='dot'),
+            hovertemplate='%{x|%d.%m.%Y}<br>60G: <b>%{y:.3f}%</b><extra></extra>'
+        ))
+        apply_base(fig_vol, height=340,
+                   title=dict(text="YUVARLANMALI VOLATİLİTE", font=dict(size=11, color='#4a6080', family='DM Mono, monospace'), x=0),
+                   yaxis=dict(gridcolor='#131c2e', ticksuffix='%'),
+                   xaxis=dict(gridcolor='#131c2e', tickformat='%b %Y'))
+        st.plotly_chart(fig_vol, use_container_width=True)
 
-    # Monthly avg returns table
-    st.markdown('<div class="section-label">◈ Aylık Ortalama Getiri (Takvim)</div>', unsafe_allow_html=True)
+    # ── Yıl-Ay ısı haritası
+    st.markdown('<div class="section-label">◈ Yıl–Ay Ortalama Günlük Getiri (Isı Haritası)</div>', unsafe_allow_html=True)
     ay_pivot = df.groupby(['Yil', 'Ay'])['Yuzde_Degisim'].mean().unstack(fill_value=np.nan)
     ay_pivot.columns = [TR_AY.get(c, str(c)) for c in ay_pivot.columns]
     fig_heat = go.Figure(go.Heatmap(
