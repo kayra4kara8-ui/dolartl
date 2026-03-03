@@ -158,7 +158,15 @@ with st.sidebar:
     gosterim_sayisi = st.selectbox("🔢 Gösterilecek Sıçrama Sayısı", gosterim_secenekleri, index=2)
     
     yon = st.radio("📊 Sıçrama Yönü", ["Tümü", "Sadece Pozitif 📈", "Sadece Negatif 📉"])
-    
+
+    st.markdown("---")
+    st.markdown("### 🏷️ Etiket Ayarı")
+    etiket_quantile = st.slider(
+        "En büyük kaç %'lik dilim etiketlensin?",
+        min_value=10, max_value=100, value=50, step=5,
+        help="50 = sadece en büyük %50 etiketlenir · 100 = tümü etiketlenir"
+    )
+
     st.markdown("---")
     st.markdown("### 📁 Veri Yükle")
     uploaded_file = st.file_uploader("Excel dosyası (.xlsx)", type=['xlsx', 'xls'])
@@ -178,7 +186,6 @@ if uploaded_file is None:
     </div>
     """, unsafe_allow_html=True)
 else:
-    # Veri yükleme
     with st.spinner("⏳ Veriler işleniyor..."):
         try:
             df, nan_cleaned = veri_isle(uploaded_file.read())
@@ -230,8 +237,8 @@ else:
             """, unsafe_allow_html=True)
     
     st.markdown("<br>", unsafe_allow_html=True)
-
-    # Türkçe ay adları için yardımcı sözlük
+    
+    # Türkçe yardımcılar
     TR_AY = {1:'Oca',2:'Şub',3:'Mar',4:'Nis',5:'May',6:'Haz',
              7:'Tem',8:'Ağu',9:'Eyl',10:'Eki',11:'Kas',12:'Ara'}
     TR_AY_UZUN = {1:'Ocak',2:'Şubat',3:'Mart',4:'Nisan',5:'Mayıs',6:'Haziran',
@@ -239,19 +246,12 @@ else:
     TR_GUN = {'Monday':'Pazartesi','Tuesday':'Salı','Wednesday':'Çarşamba',
               'Thursday':'Perşembe','Friday':'Cuma','Saturday':'Cumartesi','Sunday':'Pazar'}
 
-    # Hover metni önceden hesapla
-    df['Hover_Tarih'] = df.apply(lambda r: f"{int(r['Tarih'].day)} {TR_AY_UZUN.get(r['Tarih'].month,'')} {int(r['Tarih'].year)}", axis=1)
-
-    pos_j = top_sicramalar[top_sicramalar['Yuzde_Degisim'] > 0].copy()
-    neg_j = top_sicramalar[top_sicramalar['Yuzde_Degisim'] < 0].copy()
-
-    if len(pos_j) > 0:
-        pos_j['_hover'] = pos_j.apply(lambda r: f"{int(r['Tarih'].day)} {TR_AY_UZUN.get(r['Tarih'].month,'')} {int(r['Tarih'].year)} — {TR_GUN.get(r['Gun_Adi'], r['Gun_Adi'])}", axis=1)
-    if len(neg_j) > 0:
-        neg_j['_hover'] = neg_j.apply(lambda r: f"{int(r['Tarih'].day)} {TR_AY_UZUN.get(r['Tarih'].month,'')} {int(r['Tarih'].year)} — {TR_GUN.get(r['Gun_Adi'], r['Gun_Adi'])}", axis=1)
+    df['Hover_Tarih'] = df.apply(
+        lambda r: f"{int(r['Tarih'].day)} {TR_AY_UZUN.get(r['Tarih'].month,'')} {int(r['Tarih'].year)}", axis=1
+    )
 
     # ─── GRAFİK 1: ANA DOLAR KURU ────────────────────────────────────────────
-    st.markdown(f'<div class="section-header"><h3 style="margin:0; color:#e2e8f0;">📈 Dolar Kuru Grafiği</h3></div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-header"><h3 style="margin:0; color:#e2e8f0;">📈 Dolar Kuru Grafiği</h3></div>', unsafe_allow_html=True)
 
     fig1 = go.Figure()
     fig1.add_trace(go.Scatter(
@@ -262,70 +262,62 @@ else:
         hovertemplate='<b>%{text}</b><br>💲 Kur: <b>%{y:.4f}</b> ₺<extra></extra>'
     ))
     
+    pos_j = top_sicramalar[top_sicramalar['Yuzde_Degisim'] > 0].copy()
+    neg_j = top_sicramalar[top_sicramalar['Yuzde_Degisim'] < 0].copy()
+    
     if len(pos_j) > 0:
+        pos_j['_hover'] = pos_j.apply(
+            lambda r: f"{int(r['Tarih'].day)} {TR_AY_UZUN.get(r['Tarih'].month,'')} {int(r['Tarih'].year)} — {TR_GUN.get(r['Gun_Adi'], r['Gun_Adi'])}", axis=1
+        )
         fig1.add_trace(go.Scatter(
             x=pos_j['Tarih'], y=pos_j['Dolar_Kuru'],
             mode='markers', name='📈 Pozitif Sıçrama',
-            marker=dict(
-                color=tema['pos'], size=pos_j['Abs_Degisim'] * 3,
-                line=dict(color='white', width=1.5), opacity=0.9
-            ),
+            marker=dict(color=tema['pos'], size=pos_j['Abs_Degisim'] * 3,
+                        line=dict(color='white', width=1.5), opacity=0.9),
             text=pos_j['_hover'],
             customdata=list(zip(pos_j['Yuzde_Degisim'], pos_j['Onceki_Kur'], pos_j['Dolar_Kuru'])),
             hovertemplate=(
-                '<b>%{text}</b><br>'
-                '━━━━━━━━━━━━━━━<br>'
+                '<b>%{text}</b><br>━━━━━━━━━━━━━━━<br>'
                 '💲 Yeni Kur: <b>%{customdata[2]:.4f} ₺</b><br>'
                 '💲 Önceki Kur: %{customdata[1]:.4f} ₺<br>'
-                '📈 Değişim: <b style="color:#48BB78">+%{customdata[0]:.2f}%</b>'
-                '<extra></extra>'
+                '📈 Değişim: <b style="color:#48BB78">+%{customdata[0]:.2f}%</b><extra></extra>'
             )
         ))
     
     if len(neg_j) > 0:
+        neg_j['_hover'] = neg_j.apply(
+            lambda r: f"{int(r['Tarih'].day)} {TR_AY_UZUN.get(r['Tarih'].month,'')} {int(r['Tarih'].year)} — {TR_GUN.get(r['Gun_Adi'], r['Gun_Adi'])}", axis=1
+        )
         fig1.add_trace(go.Scatter(
             x=neg_j['Tarih'], y=neg_j['Dolar_Kuru'],
             mode='markers', name='📉 Negatif Sıçrama',
-            marker=dict(
-                color=tema['neg'], size=neg_j['Abs_Degisim'] * 3,
-                line=dict(color='white', width=1.5), opacity=0.9
-            ),
+            marker=dict(color=tema['neg'], size=neg_j['Abs_Degisim'] * 3,
+                        line=dict(color='white', width=1.5), opacity=0.9),
             text=neg_j['_hover'],
             customdata=list(zip(neg_j['Yuzde_Degisim'], neg_j['Onceki_Kur'], neg_j['Dolar_Kuru'])),
             hovertemplate=(
-                '<b>%{text}</b><br>'
-                '━━━━━━━━━━━━━━━<br>'
+                '<b>%{text}</b><br>━━━━━━━━━━━━━━━<br>'
                 '💲 Yeni Kur: <b>%{customdata[2]:.4f} ₺</b><br>'
                 '💲 Önceki Kur: %{customdata[1]:.4f} ₺<br>'
-                '📉 Değişim: <b style="color:#F56565">%{customdata[0]:.2f}%</b>'
-                '<extra></extra>'
+                '📉 Değişim: <b style="color:#F56565">%{customdata[0]:.2f}%</b><extra></extra>'
             )
         ))
     
     fig1.update_layout(
-        title=dict(
-            text=f"DOLAR KURU — EN BÜYÜK {gosterim_sayisi} GÜNLÜK SIÇRAMA  |  Eşik: %{esik}",
-            font=dict(size=15, color='#e2e8f0'), x=0.01
-        ),
+        title=dict(text=f"DOLAR KURU — EN BÜYÜK {gosterim_sayisi} GÜNLÜK SIÇRAMA  |  Eşik: %{esik}",
+                   font=dict(size=15, color='#e2e8f0'), x=0.01),
         xaxis_title="", yaxis_title="Dolar Kuru (₺)",
         height=620,
         paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(26,31,46,0.8)',
         font=dict(color='#e2e8f0', family='Inter, sans-serif'),
         legend=dict(bgcolor='rgba(15,17,23,0.7)', bordercolor='#4a5568', borderwidth=1,
                     orientation='h', yanchor='bottom', y=1.01, xanchor='left', x=0),
-        xaxis=dict(
-            gridcolor='#2d3748', gridwidth=0.5,
-            tickformat='%b %Y',
-            tickfont=dict(size=11, color='#a0aec0'),
-            showspikes=True, spikecolor='#4299e1', spikethickness=1, spikedash='dot'
-        ),
-        yaxis=dict(
-            gridcolor='#2d3748', gridwidth=0.5,
-            tickformat=',.4f',
-            ticksuffix=' ₺',
-            tickfont=dict(size=11, color='#a0aec0'),
-            showspikes=True, spikecolor='#4299e1', spikethickness=1, spikedash='dot'
-        ),
+        xaxis=dict(gridcolor='#2d3748', gridwidth=0.5, tickformat='%b %Y',
+                   tickfont=dict(size=11, color='#a0aec0'),
+                   showspikes=True, spikecolor='#4299e1', spikethickness=1, spikedash='dot'),
+        yaxis=dict(gridcolor='#2d3748', gridwidth=0.5, tickformat=',.4f', ticksuffix=' ₺',
+                   tickfont=dict(size=11, color='#a0aec0'),
+                   showspikes=True, spikecolor='#4299e1', spikethickness=1, spikedash='dot'),
         hovermode='closest',
         hoverlabel=dict(bgcolor='#1a1f2e', font_size=13, font_color='#e2e8f0', bordercolor='#4299e1')
     )
@@ -335,6 +327,8 @@ else:
     st.markdown('<div class="section-header"><h3 style="margin:0; color:#e2e8f0;">📉 Günlük Yüzde Değişimler</h3></div>', unsafe_allow_html=True)
     
     fig2 = go.Figure()
+
+    # Arka plan çizgisi
     fig2.add_trace(go.Scatter(
         x=df['Tarih'], y=df['Yuzde_Degisim'],
         mode='lines', name='Günlük Değişim',
@@ -344,8 +338,12 @@ else:
     ))
 
     if len(pos_j) > 0:
+        # Sadece en büyük dilimi etiketle
+        pos_esik_val = pos_j['Yuzde_Degisim'].quantile(1 - etiket_quantile / 100)
         pos_j['_etiket'] = pos_j.apply(
-            lambda r: f"{r['Tarih'].strftime('%d.%m.%Y')}  +{r['Yuzde_Degisim']:.2f}%", axis=1
+            lambda r: f"{r['Tarih'].strftime('%d.%m.%y')}  +{r['Yuzde_Degisim']:.1f}%"
+                      if r['Yuzde_Degisim'] >= pos_esik_val else "",
+            axis=1
         )
         fig2.add_trace(go.Scatter(
             x=pos_j['Tarih'], y=pos_j['Yuzde_Degisim'],
@@ -353,15 +351,21 @@ else:
             marker=dict(color=tema['pos'], size=10, symbol='triangle-up',
                         line=dict(color='white', width=1)),
             text=pos_j['_etiket'],
-            textposition='top center',
+            textposition='top right',
             textfont=dict(size=9, color=tema['pos']),
-            customdata=pos_j['Yuzde_Degisim'],
-            hovertemplate='<b>%{text}</b><br>📈 +%{customdata:.2f}%<extra></extra>'
+            customdata=list(zip(
+                pos_j['Yuzde_Degisim'],
+                pos_j['Tarih'].dt.strftime('%d.%m.%Y')
+            )),
+            hovertemplate='<b>%{customdata[1]}</b><br>📈 +%{customdata[0]:.2f}%<extra></extra>'
         ))
 
     if len(neg_j) > 0:
+        neg_esik_val = neg_j['Yuzde_Degisim'].quantile(etiket_quantile / 100)
         neg_j['_etiket'] = neg_j.apply(
-            lambda r: f"{r['Tarih'].strftime('%d.%m.%Y')}  {r['Yuzde_Degisim']:.2f}%", axis=1
+            lambda r: f"{r['Tarih'].strftime('%d.%m.%y')}  {r['Yuzde_Degisim']:.1f}%"
+                      if r['Yuzde_Degisim'] <= neg_esik_val else "",
+            axis=1
         )
         fig2.add_trace(go.Scatter(
             x=neg_j['Tarih'], y=neg_j['Yuzde_Degisim'],
@@ -369,26 +373,33 @@ else:
             marker=dict(color=tema['neg'], size=10, symbol='triangle-down',
                         line=dict(color='white', width=1)),
             text=neg_j['_etiket'],
-            textposition='bottom center',
+            textposition='bottom right',
             textfont=dict(size=9, color=tema['neg']),
-            customdata=neg_j['Yuzde_Degisim'],
-            hovertemplate='<b>%{text}</b><br>📉 %{customdata:.2f}%<extra></extra>'
+            customdata=list(zip(
+                neg_j['Yuzde_Degisim'],
+                neg_j['Tarih'].dt.strftime('%d.%m.%Y')
+            )),
+            hovertemplate='<b>%{customdata[1]}</b><br>📉 %{customdata[0]:.2f}%<extra></extra>'
         ))
 
-    fig2.add_hline(y=esik, line_dash="dash", line_color=tema['pos'],
+    fig2.add_hline(y=esik,  line_dash="dash", line_color=tema['pos'],
                    annotation_text=f"+{esik}%", annotation_font_color=tema['pos'])
     fig2.add_hline(y=-esik, line_dash="dash", line_color=tema['neg'],
                    annotation_text=f"-{esik}%", annotation_font_color=tema['neg'])
     fig2.add_hline(y=0, line_color='#4a5568', line_width=0.8)
+
     fig2.update_layout(
         title=dict(text=f"GÜNLÜK YÜZDE DEĞİŞİMLER  |  %{esik} Eşiği",
                    font=dict(size=14, color='#e2e8f0'), x=0.01),
-        height=550, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(26,31,46,0.8)',
+        height=580,
+        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(26,31,46,0.8)',
         font=dict(color='#e2e8f0'),
-        xaxis=dict(gridcolor='#2d3748', tickformat='%b %Y', tickfont=dict(size=11, color='#a0aec0')),
-        yaxis=dict(gridcolor='#2d3748', ticksuffix='%', tickfont=dict(size=11, color='#a0aec0')),
-        legend=dict(bgcolor='rgba(15,17,23,0.6)', bordercolor='#4a5568', orientation='h',
-                    yanchor='bottom', y=1.01, xanchor='left', x=0),
+        xaxis=dict(gridcolor='#2d3748', tickformat='%b %Y',
+                   tickfont=dict(size=11, color='#a0aec0')),
+        yaxis=dict(gridcolor='#2d3748', ticksuffix='%',
+                   tickfont=dict(size=11, color='#a0aec0')),
+        legend=dict(bgcolor='rgba(15,17,23,0.6)', bordercolor='#4a5568',
+                    orientation='h', yanchor='bottom', y=1.01, xanchor='left', x=0),
         hovermode='closest',
         hoverlabel=dict(bgcolor='#1a1f2e', font_size=12, font_color='#e2e8f0', bordercolor='#4299e1')
     )
@@ -426,23 +437,23 @@ else:
     col_l, col_r = st.columns(2)
     
     with col_l:
-        # GRAFİK 3: KÜMÜLATİF
         st.markdown('<div class="section-header"><h3 style="margin:0; color:#e2e8f0;">📈 Kümülatif Sıçrama</h3></div>', unsafe_allow_html=True)
         cum_df = sicramalar.sort_values('Tarih').reset_index(drop=True)
         cum_df['Kumulatif'] = range(1, len(cum_df)+1)
-        cum_df['_hover'] = cum_df.apply(lambda r: f"{int(r['Tarih'].day)} {TR_AY_UZUN.get(r['Tarih'].month,'')} {int(r['Tarih'].year)}", axis=1)
+        cum_df['_hover'] = cum_df.apply(
+            lambda r: f"{int(r['Tarih'].day)} {TR_AY_UZUN.get(r['Tarih'].month,'')} {int(r['Tarih'].year)}", axis=1
+        )
         fig3 = go.Figure(go.Scatter(
             x=cum_df['Tarih'], y=cum_df['Kumulatif'],
             fill='tozeroy', line=dict(color=tema['cum'], width=2),
-            fillcolor=f"rgba(159,122,234,0.15)",
+            fillcolor="rgba(159,122,234,0.15)",
             text=cum_df['_hover'],
             customdata=cum_df['Abs_Degisim'],
             hovertemplate='<b>%{text}</b><br>Kümülatif: <b>%{y}</b> sıçrama<br>Bu gün: %{customdata:.2f}%<extra></extra>'
         ))
         fig3.update_layout(
             title=dict(text="KÜMÜLATİF SIÇRAMA SAYISI", font=dict(size=13, color='#e2e8f0'), x=0.01),
-            height=400,
-            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(26,31,46,0.8)',
+            height=400, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(26,31,46,0.8)',
             font=dict(color='#e2e8f0'),
             xaxis=dict(gridcolor='#2d3748', tickformat='%b %Y', tickfont=dict(size=10, color='#a0aec0')),
             yaxis=dict(gridcolor='#2d3748', tickfont=dict(size=10, color='#a0aec0')),
@@ -451,19 +462,15 @@ else:
         st.plotly_chart(fig3, use_container_width=True)
     
     with col_r:
-        # GRAFİK 4: AYLIK
         st.markdown('<div class="section-header"><h3 style="margin:0; color:#e2e8f0;">📅 Aylık Dağılım</h3></div>', unsafe_allow_html=True)
         ay_order_tr = ['Ocak','Şubat','Mart','Nisan','Mayıs','Haziran',
-                        'Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık']
+                       'Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık']
         sicramalar['Ay_Adi_TR'] = sicramalar['Ay'].map(TR_AY_UZUN)
         ay_sayim = sicramalar.groupby('Ay_Adi_TR').size().reindex(ay_order_tr).fillna(0)
         fig4 = go.Figure(go.Bar(
             x=ay_sayim.index, y=ay_sayim.values,
-            marker=dict(
-                color=ay_sayim.values,
-                colorscale='Viridis',
-                line=dict(color='rgba(255,255,255,0.1)', width=1)
-            ),
+            marker=dict(color=ay_sayim.values, colorscale='Viridis',
+                        line=dict(color='rgba(255,255,255,0.1)', width=1)),
             hovertemplate='<b>%{x}</b><br>Sıçrama Sayısı: <b>%{y}</b><extra></extra>'
         ))
         fig4.update_layout(
@@ -479,17 +486,14 @@ else:
     col_l2, col_r2 = st.columns(2)
     
     with col_l2:
-        # GRAFİK 5: HAFTALIK PATTERN
         st.markdown('<div class="section-header"><h3 style="margin:0; color:#e2e8f0;">📆 Haftalık Pattern</h3></div>', unsafe_allow_html=True)
         gun_order_tr = ['Pazartesi','Salı','Çarşamba','Perşembe','Cuma','Cumartesi','Pazar']
         sicramalar['Gun_Adi_TR'] = sicramalar['Gun_Adi'].map(TR_GUN)
         gun_sayim = sicramalar.groupby('Gun_Adi_TR').size().reindex(gun_order_tr).fillna(0)
         fig5 = go.Figure(go.Bar(
             x=gun_sayim.index, y=gun_sayim.values,
-            marker=dict(
-                color=gun_sayim.values, colorscale='Plasma',
-                line=dict(color='rgba(255,255,255,0.1)', width=1)
-            ),
+            marker=dict(color=gun_sayim.values, colorscale='Plasma',
+                        line=dict(color='rgba(255,255,255,0.1)', width=1)),
             hovertemplate='<b>%{x}</b><br>Sıçrama: <b>%{y}</b><extra></extra>'
         ))
         fig5.update_layout(
@@ -503,7 +507,6 @@ else:
         st.plotly_chart(fig5, use_container_width=True)
     
     with col_r2:
-        # GRAFİK 6: YILLIK TREND
         st.markdown('<div class="section-header"><h3 style="margin:0; color:#e2e8f0;">📊 Yıllık Trend</h3></div>', unsafe_allow_html=True)
         yil_sayim = sicramalar.groupby('Yil').size().reset_index(name='Sayi')
         fig6 = go.Figure(go.Scatter(
@@ -530,7 +533,6 @@ else:
     col_l3, col_r3 = st.columns(2)
     
     with col_l3:
-        # GRAFİK 7: BÜYÜKLÜK DAĞILIMI
         st.markdown('<div class="section-header"><h3 style="margin:0; color:#e2e8f0;">📊 Büyüklük Dağılımı</h3></div>', unsafe_allow_html=True)
         fig7 = go.Figure()
         fig7.add_trace(go.Histogram(
@@ -556,24 +558,19 @@ else:
         st.plotly_chart(fig7, use_container_width=True)
     
     with col_r3:
-        # GRAFİK 8: ISI HARİTASI
         st.markdown('<div class="section-header"><h3 style="margin:0; color:#e2e8f0;">🗺️ Yıl-Ay Isı Haritası</h3></div>', unsafe_allow_html=True)
         pivot = sicramalar.groupby(['Yil','Ay']).size().unstack(fill_value=0)
         ay_labels = [TR_AY.get(c, str(c)) for c in pivot.columns]
         fig8 = go.Figure(go.Heatmap(
-            z=pivot.values,
-            x=ay_labels,
-            y=pivot.index.astype(str),
+            z=pivot.values, x=ay_labels, y=pivot.index.astype(str),
             colorscale='RdYlGn',
-            text=pivot.values,
-            texttemplate="%{text}",
+            text=pivot.values, texttemplate="%{text}",
             textfont=dict(size=10, color='#1a1f2e'),
             hovertemplate='<b>%{y} — %{x}</b><br>Sıçrama: <b>%{z}</b><extra></extra>'
         ))
         fig8.update_layout(
             title=dict(text="YIL — AY BAZINDA SIÇRAMA YOĞUNLUĞU", font=dict(size=13, color='#e2e8f0'), x=0.01),
-            height=500,
-            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(26,31,46,0.8)',
+            height=500, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(26,31,46,0.8)',
             font=dict(color='#e2e8f0'),
             xaxis=dict(tickfont=dict(size=11, color='#a0aec0'), side='bottom'),
             yaxis=dict(tickfont=dict(size=11, color='#a0aec0'), autorange='reversed'),
@@ -581,11 +578,10 @@ else:
         )
         st.plotly_chart(fig8, use_container_width=True)
     
-    # ─── TABLO 1: EN BÜYÜK SIÇRAMALAR ────────────────────────────────────────
+    # ─── TABLO 1 ─────────────────────────────────────────────────────────────
     st.markdown('<div class="section-header"><h3 style="margin:0; color:#e2e8f0;">📋 En Büyük Sıçramalar Tablosu</h3></div>', unsafe_allow_html=True)
     
-    tablo1 = top_sicramalar.copy()
-    tablo1 = tablo1.reset_index(drop=True)
+    tablo1 = top_sicramalar.copy().reset_index(drop=True)
     tablo1.index = tablo1.index + 1
     tablo1_show = pd.DataFrame({
         '#': tablo1.index,
@@ -602,7 +598,6 @@ else:
     })
     st.dataframe(tablo1_show, use_container_width=True, height=400)
     
-    # ─── TABLO 2 & 3 ─────────────────────────────────────────────────────────
     col_t1, col_t2 = st.columns(2)
     
     with col_t1:
@@ -639,14 +634,16 @@ else:
             aylik.to_excel(writer, sheet_name='Aylik_Ozet')
             yillik.to_excel(writer, sheet_name='Yillik_Ozet')
         st.download_button("📊 Excel İndir (Tüm Analiz)", excel_buf.getvalue(),
-                           "dolar_analiz.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                           "dolar_analiz.xlsx",
+                           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     
     with col_d3:
         st.info("💡 Grafikleri indirmek için grafiğin üzerindeki kamera ikonuna tıklayın")
 
 # Footer
 st.markdown("""
-<div style="text-align:center; color:#4a5568; font-size:0.75rem; padding: 30px 0; border-top: 1px solid #2d3748; margin-top: 30px;">
+<div style="text-align:center; color:#4a5568; font-size:0.75rem; padding: 30px 0;
+            border-top: 1px solid #2d3748; margin-top: 30px;">
     💹 Dolar Kuru Sıçrama Analizi | Powered by Streamlit + Plotly
 </div>
 """, unsafe_allow_html=True)
