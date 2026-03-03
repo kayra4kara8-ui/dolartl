@@ -327,9 +327,9 @@ def veri_isle(raw):
 
     # Rolling returns
     df_indexed = df.set_index('Tarih')
-    df['Haftalik_Getiri'] = df_indexed['Dolar_Kuru'].pct_change(5).values * 100
-    df['Aylik_Getiri']    = df_indexed['Dolar_Kuru'].pct_change(21).values * 100
-    df['3Ay_Getiri']      = df_indexed['Dolar_Kuru'].pct_change(63).values * 100
+    df['Haftalik_Değişim'] = df_indexed['Dolar_Kuru'].pct_change(5).values * 100
+    df['Aylik_Değişim']    = df_indexed['Dolar_Kuru'].pct_change(21).values * 100
+    df['3Ay_Değişim']      = df_indexed['Dolar_Kuru'].pct_change(63).values * 100
 
     df['Hover_Tarih'] = df.apply(
         lambda r: f"{int(r['Tarih'].day)} {TR_AY_UZUN.get(r['Tarih'].month,'')} {int(r['Tarih'].year)}", axis=1)
@@ -923,17 +923,17 @@ with tab2:
     """, unsafe_allow_html=True)
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Aylık getiri
-    st.markdown('<div class="section-label">◈ Aylık Getiri (21 Gün)</div>', unsafe_allow_html=True)
+    # ── Aylık Değişim
+    st.markdown('<div class="section-label">◈ Aylık Değişim (21 Gün)</div>', unsafe_allow_html=True)
     col_am1, col_am2 = st.columns(2)
     with col_am1:
-        aylik_g = df.dropna(subset=['Aylik_Getiri']).copy()
+        aylik_g = df.dropna(subset=['Aylik_Değişim']).copy()
         aylik_g_filt = aylik_g[aylik_g['Gun_Adi_TR'].isin(aktif_gunler)] if gun_filtre else aylik_g
         aylik_g_filt = aylik_g_filt.copy()
-        aylik_g_filt['renk'] = aylik_g_filt['Aylik_Getiri'].apply(lambda x: '#4a9eff' if x >= 0 else '#ff4d6a')
+        aylik_g_filt['renk'] = aylik_g_filt['Aylik_Değişim'].apply(lambda x: '#4a9eff' if x >= 0 else '#ff4d6a')
         fig_am = go.Figure()
         fig_am.add_trace(go.Bar(
-            x=aylik_g_filt['Tarih'], y=aylik_g_filt['Aylik_Getiri'],
+            x=aylik_g_filt['Tarih'], y=aylik_g_filt['Aylik_Değişim'],
             marker_color=aylik_g_filt['renk'].values, opacity=0.8,
             customdata=aylik_g_filt['Gun_Adi_TR'],
             hovertemplate='%{x|%d.%m.%Y} (%{customdata})<br>21G: <b>%{y:.2f}%</b><extra></extra>'
@@ -969,7 +969,7 @@ with tab2:
         st.plotly_chart(fig_vol, use_container_width=True)
 
     # ── Yıl-Ay ısı haritası
-    st.markdown('<div class="section-label">◈ Yıl–Ay Ortalama Günlük Getiri (Isı Haritası)</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-label">◈ Yıl–Ay Ortalama Günlük Değişim (Isı Haritası)</div>', unsafe_allow_html=True)
     ay_pivot = df.groupby(['Yil', 'Ay'])['Yuzde_Degisim'].mean().unstack(fill_value=np.nan)
     ay_pivot.columns = [TR_AY.get(c, str(c)) for c in ay_pivot.columns]
     fig_heat = go.Figure(go.Heatmap(
@@ -1067,7 +1067,7 @@ with tab3:
         st.plotly_chart(fig_win, use_container_width=True)
 
         # Threshold sensitivity
-        st.markdown('<div class="section-label">◈ Eşik Hassasiyeti (21 Günlük Ort. Getiri vs Tetikleyici Eşik)</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-label">◈ Eşik Hassasiyeti (21 Günlük Ort. Değişim vs Tetikleyici Eşik)</div>', unsafe_allow_html=True)
         thresholds = np.arange(1.0, 12.0, 0.5)
         means_21 = []
         pct_pos_21 = []
@@ -1086,7 +1086,7 @@ with tab3:
         fig_sens = make_subplots(specs=[[{"secondary_y": True}]])
         fig_sens.add_trace(go.Scatter(
             x=thresholds, y=means_21,
-            mode='lines+markers', name='Ort. 21G Getiri',
+            mode='lines+markers', name='Ort. 21G Değişim',
             line=dict(color='#4a9eff', width=2),
             marker=dict(size=6),
             hovertemplate='Eşik: %{x:.1f}%<br>Ort. 21G: <b>%{y:.2f}%</b><extra></extra>'
@@ -1267,4 +1267,5 @@ st.markdown("""
     USDTRY ANALYSIS PLATFORM · STREAMLIT + PLOTLY
 </div>
 """, unsafe_allow_html=True)
+
 
