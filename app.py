@@ -398,17 +398,31 @@ with st.sidebar:
     st.markdown("""
     <div style="font-family:'DM Mono',monospace; font-size:0.65rem; text-transform:uppercase;
                 letter-spacing:0.15em; color:#1b6cf2; padding:20px 0 12px 0; border-bottom:1px solid #1e2d4a;">
+        ◈ Etiket Ayarı (Günlük)
+    </div>
+    """, unsafe_allow_html=True)
+    st.markdown("<br>", unsafe_allow_html=True)
+    etiket_quantile = st.slider("Günlük — Etiketlenecek Dilim (%)", 10, 100, 40, 5,
+                                 help="Günlük değişim grafiğinde en büyük kaç %'lik dilim etiketlensin")
+
+    st.markdown("""
+    <div style="font-family:'DM Mono',monospace; font-size:0.65rem; text-transform:uppercase;
+                letter-spacing:0.15em; color:#1b6cf2; padding:20px 0 12px 0; border-bottom:1px solid #1e2d4a;">
         ◈ Haftalık / Gün Analizi
     </div>
     """, unsafe_allow_html=True)
     st.markdown("<br>", unsafe_allow_html=True)
-    haftalik_esik = st.slider("Haftalık Değişim Eşiği (%)", 0.0, 20.0, 3.0, 0.5,
-                               help="Haftalık getiri grafiğinde vurgulanacak eşik")
+    haftalik_esik = st.slider("Haftalık Sıçrama Eşiği (%)", 0.0, 20.0, 3.0, 0.5,
+                               help="Bu eşiği aşan haftalık değişimler scatter'da vurgulanır ve etiketlenir")
+    haftalik_etiket = st.slider("Haftalık — Etiketlenecek Dilim (%)", 10, 100, 40, 5,
+                                 help="Haftalık scatter'da en büyük kaç %'lik dilim etiketlensin")
+    haftalik_yon = st.radio("Haftalık Yön", ["Tümü", "Yalnız Pozitif ↑", "Yalnız Negatif ↓"],
+                             key="haftalik_yon")
     gun_filtre = st.multiselect(
-        "Gün Filtresi (boş = tümü)",
+        "Gün Filtresi — Scatter Renklendirme",
         ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"],
         default=[],
-        help="Seçili günlerin değişimlerini ayrı analiz et"
+        help="Seçili günlerin noktaları ayrı renkle gösterilir. Boş = eşiğe göre renk."
     )
 
     st.markdown("""
@@ -420,15 +434,6 @@ with st.sidebar:
     st.markdown("<br>", unsafe_allow_html=True)
     fwd_threshold = st.slider("Tetikleyici Eşik (%)", 0.5, 15.0, 3.0, 0.5,
                                help="Bu büyüklükteki sıçramalardan sonra ne olur?")
-
-    st.markdown("""
-    <div style="font-family:'DM Mono',monospace; font-size:0.65rem; text-transform:uppercase;
-                letter-spacing:0.15em; color:#1b6cf2; padding:20px 0 12px 0; border-bottom:1px solid #1e2d4a;">
-        ◈ Etiket Ayarı
-    </div>
-    """, unsafe_allow_html=True)
-    st.markdown("<br>", unsafe_allow_html=True)
-    etiket_quantile = st.slider("Etiketlenecek En Büyük Dilim (%)", 10, 100, 40, 5)
 
     st.markdown("""
     <div style="font-family:'DM Mono',monospace; font-size:0.65rem; text-transform:uppercase;
@@ -757,75 +762,157 @@ with tab2:
                xaxis=dict(gridcolor='#0d1220'))
     st.plotly_chart(fig_vio, use_container_width=True)
 
-    # ── Haftalık getiri (Cuma kapanışından Cuma'ya = gerçek haftalık)
-    st.markdown('<div class="section-label">◈ Haftalık Getiri Analizi</div>', unsafe_allow_html=True)
+    # ── Haftalık getiri — günlük grafikle aynı mantık
+    st.markdown('<div class="section-label">◈ Haftalık Getiri Analizi (5 Günlük)</div>', unsafe_allow_html=True)
 
-    col_hw1, col_hw2 = st.columns([2, 1])
-    with col_hw1:
-        haftalik = df.dropna(subset=['Haftalik_Getiri']).copy()
-        haftalik['renk'] = haftalik.apply(
-            lambda r: GUN_COLORS.get(r['Gun_Adi_TR'], '#4a9eff') if gun_filtre
-                      else ('#00d4aa' if r['Haftalik_Getiri'] >= haftalik_esik
-                            else '#ff4d6a' if r['Haftalik_Getiri'] <= -haftalik_esik
-                            else '#2a4a7a'), axis=1
-        )
-        haftalik_filt = haftalik[haftalik['Gun_Adi_TR'].isin(aktif_gunler)] if gun_filtre else haftalik
-        fig_hw = go.Figure()
-        fig_hw.add_trace(go.Bar(
-            x=haftalik_filt['Tarih'], y=haftalik_filt['Haftalik_Getiri'],
-            marker_color=haftalik_filt['renk'].values,
-            opacity=0.85,
-            customdata=haftalik_filt['Gun_Adi_TR'],
-            hovertemplate='%{x|%d.%m.%Y} (%{customdata})<br>5G Getiri: <b>%{y:.2f}%</b><extra></extra>'
+    hf_all = df.dropna(subset=['Haftalik_Getiri']).copy()
+
+    # Yön filtresi uygula
+    if haftalik_yon == "Yalnız Pozitif ↑":
+        hf_sicrama = hf_all[hf_all['Haftalik_Getiri'] >= haftalik_esik].copy()
+    elif haftalik_yon == "Yalnız Negatif ↓":
+        hf_sicrama = hf_all[hf_all['Haftalik_Getiri'] <= -haftalik_esik].copy()
+    else:
+        hf_sicrama = hf_all[hf_all['Haftalik_Getiri'].abs() >= haftalik_esik].copy()
+
+    hf_sicrama = hf_sicrama.sort_values('Haftalik_Getiri', key=lambda x: x.abs(), ascending=False)
+
+    hf_pos_sc = hf_sicrama[hf_sicrama['Haftalik_Getiri'] > 0].copy()
+    hf_neg_sc = hf_sicrama[hf_sicrama['Haftalik_Getiri'] < 0].copy()
+
+    # Etiket hesapla
+    def haftalik_etiket_hesapla(sub, is_pos):
+        if len(sub) == 0:
+            sub['_lbl'] = []
+            return sub
+        if is_pos:
+            esik_val = sub['Haftalik_Getiri'].quantile(1 - haftalik_etiket / 100)
+            sub['_lbl'] = sub.apply(
+                lambda r: f"{r['Tarih'].strftime('%d.%m.%y')}  +{r['Haftalik_Getiri']:.1f}%"
+                          if r['Haftalik_Getiri'] >= esik_val else "", axis=1)
+        else:
+            esik_val = sub['Haftalik_Getiri'].quantile(haftalik_etiket / 100)
+            sub['_lbl'] = sub.apply(
+                lambda r: f"{r['Tarih'].strftime('%d.%m.%y')}  {r['Haftalik_Getiri']:.1f}%"
+                          if r['Haftalik_Getiri'] <= esik_val else "", axis=1)
+        return sub
+
+    hf_pos_sc = haftalik_etiket_hesapla(hf_pos_sc, True)
+    hf_neg_sc = haftalik_etiket_hesapla(hf_neg_sc, False)
+
+    fig_hw = go.Figure()
+
+    # Arka plan çizgisi — tüm haftalık değişimler
+    fig_hw.add_trace(go.Scatter(
+        x=hf_all['Tarih'], y=hf_all['Haftalik_Getiri'],
+        mode='lines', name='5G Değişim',
+        line=dict(color='#CBD5E0', width=0.8), opacity=0.3,
+        text=hf_all['Gun_Adi_TR'],
+        hovertemplate='%{x|%d.%m.%Y} (%{text})<br>5G: %{y:.2f}%<extra></extra>'
+    ))
+
+    # Pozitif sıçramalar
+    if len(hf_pos_sc) > 0:
+        color_pos = GUN_COLORS if gun_filtre else None
+        fig_hw.add_trace(go.Scatter(
+            x=hf_pos_sc['Tarih'], y=hf_pos_sc['Haftalik_Getiri'],
+            mode='markers+text', name='↑ Pozitif',
+            marker=dict(
+                color=[GUN_COLORS.get(g, '#00d4aa') for g in hf_pos_sc['Gun_Adi_TR']] if gun_filtre else '#00d4aa',
+                size=hf_pos_sc['Haftalik_Getiri'].abs() * 1.8 + 5,
+                symbol='triangle-up',
+                line=dict(color='rgba(0,212,170,0.3)', width=2), opacity=0.9
+            ),
+            text=hf_pos_sc['_lbl'],
+            textposition='top right',
+            textfont=dict(size=8, color='#00d4aa', family='DM Mono, monospace'),
+            customdata=list(zip(
+                hf_pos_sc['Haftalik_Getiri'],
+                hf_pos_sc['Gun_Adi_TR'],
+                hf_pos_sc['Dolar_Kuru']
+            )),
+            hovertemplate='<b>%{x|%d.%m.%Y}</b> (%{customdata[1]})<br>5G: <b style="color:#00d4aa">+%{customdata[0]:.3f}%</b><br>Kur: %{customdata[2]:.4f} ₺<extra></extra>'
         ))
-        fig_hw.add_hline(y=haftalik_esik, line_dash="dash",
-                         line_color='rgba(0,212,170,0.5)', line_width=1,
-                         annotation_text=f"+{haftalik_esik}%",
-                         annotation_font_color='#00d4aa', annotation_font_size=9)
-        fig_hw.add_hline(y=-haftalik_esik, line_dash="dash",
-                         line_color='rgba(255,77,106,0.5)', line_width=1,
-                         annotation_text=f"-{haftalik_esik}%",
-                         annotation_font_color='#ff4d6a', annotation_font_size=9)
-        fig_hw.add_hline(y=0, line_color='#1e2d4a', line_width=1)
-        apply_base(fig_hw, height=380,
-                   title=dict(text=f"5 GÜNLÜK GETİRİ  ·  Eşik ±%{haftalik_esik}", font=dict(size=11, color='#4a6080', family='DM Mono, monospace'), x=0),
-                   yaxis=dict(gridcolor='#131c2e', ticksuffix='%'),
-                   xaxis=dict(gridcolor='#131c2e', tickformat='%b %Y'),
-                   showlegend=False)
-        st.plotly_chart(fig_hw, use_container_width=True)
 
-    with col_hw2:
-        # Haftalık eşik istatistikleri
-        hf = df.dropna(subset=['Haftalik_Getiri'])
-        hf_pos = (hf['Haftalik_Getiri'] >= haftalik_esik).sum()
-        hf_neg = (hf['Haftalik_Getiri'] <= -haftalik_esik).sum()
-        hf_ort = hf['Haftalik_Getiri'].mean()
-        hf_maks = hf['Haftalik_Getiri'].max()
-        hf_mins = hf['Haftalik_Getiri'].min()
-        sign_hf = "+" if hf_ort >= 0 else ""
-        st.markdown(f"""
-        <div style="display:flex; flex-direction:column; gap:10px; margin-top:40px;">
-          <div class="metric-card" style="border-top:2px solid #4a9eff;">
-            <div class="metric-label">Haftalık Ort.</div>
-            <div class="metric-value metric-{'pos' if hf_ort>=0 else 'neg'}">{sign_hf}{hf_ort:.3f}%</div>
-          </div>
-          <div class="metric-card" style="border-top:2px solid #00d4aa;">
-            <div class="metric-label">≥ %{haftalik_esik} hafta</div>
-            <div class="metric-value metric-pos">{hf_pos}</div>
-            <div class="metric-sub">pozitif büyük hafta</div>
-          </div>
-          <div class="metric-card" style="border-top:2px solid #ff4d6a;">
-            <div class="metric-label">≤ -%{haftalik_esik} hafta</div>
-            <div class="metric-value metric-neg">{hf_neg}</div>
-            <div class="metric-sub">negatif büyük hafta</div>
-          </div>
-          <div class="metric-card">
-            <div class="metric-label">Max / Min</div>
-            <div class="metric-value"><span class="metric-pos">+{hf_maks:.2f}%</span></div>
-            <div class="metric-sub metric-neg">{hf_mins:.2f}%</div>
-          </div>
-        </div>
-        """, unsafe_allow_html=True)
+    # Negatif sıçramalar
+    if len(hf_neg_sc) > 0:
+        fig_hw.add_trace(go.Scatter(
+            x=hf_neg_sc['Tarih'], y=hf_neg_sc['Haftalik_Getiri'],
+            mode='markers+text', name='↓ Negatif',
+            marker=dict(
+                color=[GUN_COLORS.get(g, '#ff4d6a') for g in hf_neg_sc['Gun_Adi_TR']] if gun_filtre else '#ff4d6a',
+                size=hf_neg_sc['Haftalik_Getiri'].abs() * 1.8 + 5,
+                symbol='triangle-down',
+                line=dict(color='rgba(255,77,106,0.3)', width=2), opacity=0.9
+            ),
+            text=hf_neg_sc['_lbl'],
+            textposition='bottom right',
+            textfont=dict(size=8, color='#ff4d6a', family='DM Mono, monospace'),
+            customdata=list(zip(
+                hf_neg_sc['Haftalik_Getiri'],
+                hf_neg_sc['Gun_Adi_TR'],
+                hf_neg_sc['Dolar_Kuru']
+            )),
+            hovertemplate='<b>%{x|%d.%m.%Y}</b> (%{customdata[1]})<br>5G: <b style="color:#ff4d6a">%{customdata[0]:.3f}%</b><br>Kur: %{customdata[2]:.4f} ₺<extra></extra>'
+        ))
+
+    fig_hw.add_hline(y=haftalik_esik, line_dash="dash",
+                     line_color='rgba(0,212,170,0.5)', line_width=1,
+                     annotation_text=f"+{haftalik_esik}%",
+                     annotation_font_color='#00d4aa', annotation_font_size=9)
+    fig_hw.add_hline(y=-haftalik_esik, line_dash="dash",
+                     line_color='rgba(255,77,106,0.5)', line_width=1,
+                     annotation_text=f"-{haftalik_esik}%",
+                     annotation_font_color='#ff4d6a', annotation_font_size=9)
+    fig_hw.add_hline(y=0, line_color='#1e2d4a', line_width=1)
+
+    apply_base(fig_hw, height=520,
+               title=dict(text=f"5 GÜNLÜK DEĞİŞİM  ·  Eşik ±%{haftalik_esik}  ·  Etiket top %{haftalik_etiket}",
+                          font=dict(size=11, color='#4a6080', family='DM Mono, monospace'), x=0),
+               yaxis=dict(gridcolor='#131c2e', ticksuffix='%',
+                          showspikes=True, spikecolor='#2a4a7a', spikethickness=1, spikedash='dot'),
+               xaxis=dict(gridcolor='#131c2e', tickformat='%b %Y',
+                          showspikes=True, spikecolor='#2a4a7a', spikethickness=1, spikedash='dot'),
+               hovermode='closest',
+               legend=dict(bgcolor='rgba(13,18,32,0.9)', bordercolor='#1e2d4a',
+                           orientation='h', yanchor='bottom', y=1.01, xanchor='left', x=0))
+    st.plotly_chart(fig_hw, use_container_width=True)
+
+    # Haftalık özet KPI row
+    hf_ort  = hf_all['Haftalik_Getiri'].mean()
+    hf_maks = hf_all['Haftalik_Getiri'].max()
+    hf_mins = hf_all['Haftalik_Getiri'].min()
+    hf_pos_n = (hf_all['Haftalik_Getiri'] >= haftalik_esik).sum()
+    hf_neg_n = (hf_all['Haftalik_Getiri'] <= -haftalik_esik).sum()
+    sign_hf = "+" if hf_ort >= 0 else ""
+    st.markdown(f"""
+    <div class="metric-row" style="grid-template-columns: repeat(5, 1fr);">
+      <div class="metric-card" style="border-top:2px solid #4a9eff;">
+        <div class="metric-label">Haftalık Ort.</div>
+        <div class="metric-value metric-{'pos' if hf_ort>=0 else 'neg'}">{sign_hf}{hf_ort:.3f}%</div>
+        <div class="metric-sub">5G ort. değişim</div>
+      </div>
+      <div class="metric-card" style="border-top:2px solid #00d4aa;">
+        <div class="metric-label">≥ +%{haftalik_esik} hafta</div>
+        <div class="metric-value metric-pos">{hf_pos_n}</div>
+        <div class="metric-sub">pozitif büyük hafta</div>
+      </div>
+      <div class="metric-card" style="border-top:2px solid #ff4d6a;">
+        <div class="metric-label">≤ -%{haftalik_esik} hafta</div>
+        <div class="metric-value metric-neg">{hf_neg_n}</div>
+        <div class="metric-sub">negatif büyük hafta</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Max</div>
+        <div class="metric-value metric-pos">+{hf_maks:.2f}%</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Min</div>
+        <div class="metric-value metric-neg">{hf_mins:.2f}%</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+    st.markdown("<br>", unsafe_allow_html=True)
 
     # ── Aylık getiri
     st.markdown('<div class="section-label">◈ Aylık Getiri (21 Gün)</div>', unsafe_allow_html=True)
