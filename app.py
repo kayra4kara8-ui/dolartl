@@ -6,6 +6,7 @@ import plotly.express as px
 from plotly.subplots import make_subplots
 import requests
 import io
+from datetime import datetime, timedelta
 
 st.set_page_config(
     page_title="USDTRY Analiz Platformu",
@@ -118,7 +119,8 @@ LEGEND_RIGHT = dict(
     yanchor='middle',
 )
 
-EVDS_API_KEY = "EDS05ZLAlI"
+# LÜTFEN KENDİ API ANAHTARINIZI BURAYA YAZIN
+EVDS_API_KEY = "EDS05ZLAlI"  # Buraya kendi anahtarınızı yazın
 
 def tr_fmt_kur(val, decimals=4):
     try:
@@ -198,132 +200,141 @@ def apply_base(fig, **kwargs):
     fig.update_layout(**cfg)
     return fig
 
-# ─── TCMB EVDS API ───────────────────────────────────────────────────────────
-@st.cache_data
-def evds_veri_cek(baslangic="01-01-2000", bitis=None):
-    """TCMB EVDS verisini evds paketi ile ceker. pip install evds"""
-    if bitis is None:
-        bitis = pd.Timestamp.today().strftime("%d-%m-%Y")
-    try:
-        from evds import evdsAPI
-    except ImportError:
-        st.error("❌ `evds` paketi eksik. Terminalde calistirin: pip install evds")
+# ─── TCMB EVDS API (DÜZELTİLMİŞ VERSİYON) ───────────────────────────────────
+@st.cache_data(ttl=3600)
+def evds_veri_cek(baslangic_tarihi, bitis_tarihi):
+    """
+    TCMB EVDS API'sinden USD ve EUR döviz verilerini çeker.
+    DÜZELTME: Yeni API endpoint'i ve parametre formatı kullanıldı.
+    """
+    
+    # Seri kodları (USD Alış, USD Satış, EUR Alış, EUR Satış)
+    series_codes = {
+        "TP.DK.USD.A.YTL": "USD_Alis",
+        "TP.DK.USD.S.YTL": "USD_Satis",
+        "TP.DK.EUR.A.YTL": "EUR_Alis",
+        "TP.DK.EUR.S.YTL": "EUR_Satis"
+    }
+    
+    all_data = []
+    
+    for seri_kodu, seri_adi in series_codes.items():
+        try:
+            # Yeni API endpoint'i - parametreler URL'de
+            url = f"https://evds2.tcmb.gov.tr/service/evds/series={seri_kodu}&startDate={baslangic_tarihi}&endDate={bitis_tarihi}&type=json&frequency=1"
+            
+            # Header'da API key
+            headers = {
+                "key": EVDS_API_KEY
+            }
+            
+            response = requests.get(url, headers=headers, timeout=30)
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                if "items" in data and data["items"]:
+                    for item in data["items"]:
+                        item["Seri"] = seri_adi
+                        all_data.append(item)
+            else:
+                st.warning(f"{seri_adi} çekilemedi: HTTP {response.status_code}")
+                
+        except Exception as e:
+            st.warning(f"{seri_adi} hatası: {str(e)}")
+            continue
+    
+    if not all_data:
         return None
-    try:
-        client = evdsAPI(EVDS_API_KEY)
-        seriler = ["TP.DK.USD.A.YTL", "TP.DK.USD.S.YTL", "TP.DK.EUR.A.YTL", "TP.DK.EUR.S.YTL"]
-        df = client.get_data(seriler, startdate=baslangic, enddate=bitis)
-
-        if df is None or len(df) == 0:
-            st.error("API bos veri donurdu. Anahtarinizi kontrol edin.")
-            return None
-
-        # Tarih kolonunu bul ve normalize et
-        tarih_col = next((c for c in df.columns if "tarih" in c.lower() or "date" in c.lower()), None)
-        if tarih_col and tarih_col != "Tarih":
-            df = df.rename(columns={tarih_col: "Tarih"})
-
-        df["Tarih"] = pd.to_datetime(df["Tarih"], dayfirst=True, errors="coerce")
-        df = df.dropna(subset=["Tarih"])
-
-        if "UNIXTIME" in df.columns:
-            df = df.drop(columns=["UNIXTIME"])
-
-        # nokta -> alt cizgi
-        col_map = {c: c.replace(".", "_").replace("-", "_") for c in df.columns if c != "Tarih"}
-        df = df.rename(columns=col_map)
-
-        for col in df.columns:
-            if col != "Tarih":
-                df[col] = pd.to_numeric(df[col], errors="coerce")
-
-        return df.sort_values("Tarih").reset_index(drop=True)
-
-    except Exception as e:
-        st.error(f"""
-❌ Veri cekilemedi: `{e}`
-
-**Cozum:**
-1. https://evds3.tcmb.gov.tr → Profilim → API Anahtari Kopyala
-2. `app.py` basindaki `EVDS_API_KEY = "..."` satirini guncelleyin
-3. Terminal: `pip install evds`
-""")
-        return None
+    
+    # DataFrame oluştur
+    df = pd.DataFrame(all_data)
+    
+    # Tarih ve değer sütunlarını düzenle
+    df["Tarih"] = pd.to_datetime(df["Tarih"], dayfirst=True, errors="coerce")
+    df["Value"] = pd.to_numeric(df["Value"], errors="coerce")
+    
+    # Pivot yap - her seri ayrı sütunda
+    df_pivot = df.pivot_table(index="Tarih", columns="Seri", values="Value", aggfunc="first").reset_index()
+    
+    # Sütun isimlerini düzenle
+    df_pivot = df_pivot.rename(columns={
+        "USD_Alis": "TP_DK_USD_A_YTL",
+        "USD_Satis": "TP_DK_USD_S_YTL",
+        "EUR_Alis": "TP_DK_EUR_A_YTL",
+        "EUR_Satis": "TP_DK_EUR_S_YTL"
+    })
+    
+    df_pivot = df_pivot.sort_values("Tarih").dropna(how="all", subset=[c for c in df_pivot.columns if c != "Tarih"])
+    
+    return df_pivot
 
 @st.cache_data
 def veri_isle_api(df_raw, doviz="USD", tur="Alis"):
     """Ham API verisini analiz için hazırlar."""
-    # Kolon adı varyantlarını dinamik bul
+    
+    # Kolon adını belirle
     suffix = "A" if tur == "Alis" else "S"
-    candidates = [
-        f"TP_DK_{doviz}_{suffix}",
-        f"TP_DK_{doviz}_{suffix}_YTL",
-    ]
-    col_name = next((c for c in candidates if c in df_raw.columns), None)
-
-    if col_name is None:
+    col_name = f"TP_DK_{doviz}_{suffix}_YTL"
+    
+    if col_name not in df_raw.columns:
         available = [c for c in df_raw.columns if c != "Tarih"]
-        st.error(f"Kolon bulunamadı. Aranan: {candidates}\nMevcut kolonlar: {available}")
+        st.error(f"Kolon bulunamadı: {col_name}\nMevcut kolonlar: {available}")
         return None
-
+    
     df = df_raw[["Tarih", col_name]].copy()
     df.columns = ["Tarih", "Dolar_Kuru"]
     df = df.dropna(subset=["Dolar_Kuru"])
     df = df.sort_values("Tarih").reset_index(drop=True)
-
+    
     # Aykırı değer düzeltme
     medyan = df["Dolar_Kuru"].median()
     if medyan > 0:
         aykiri = (df["Dolar_Kuru"] > medyan * 10) | (df["Dolar_Kuru"] < medyan / 10)
         if aykiri.any():
             df.loc[aykiri, "Dolar_Kuru"] = df.loc[aykiri, "Dolar_Kuru"] / 1000
-
+    
     df["Onceki_Kur"]    = df["Dolar_Kuru"].shift(1)
     df["Onceki_Tarih"]  = df["Tarih"].shift(1)
     df["Gun_Farki"]     = (df["Tarih"] - df["Onceki_Tarih"]).dt.days
     df["Yuzde_Degisim"] = (df["Dolar_Kuru"] / df["Onceki_Kur"] - 1) * 100
     df["TL_Degisim"]    = df["Dolar_Kuru"] - df["Onceki_Kur"]
     df = df.dropna()
-
+    
     df["Yil"]     = df["Tarih"].dt.year
     df["Ay"]      = df["Tarih"].dt.month
     df["Gun"]     = df["Tarih"].dt.day
     df["Ay_Adi"]  = df["Tarih"].dt.strftime("%B")
     df["Gun_Adi"] = df["Tarih"].dt.strftime("%A")
     df["Abs_Degisim"] = df["Yuzde_Degisim"].abs()
-
+    
     df_idx = df.set_index("Tarih")
     df["Haftalik_Getiri"] = df_idx["Dolar_Kuru"].pct_change(5).values * 100
     df["Aylik_Getiri"]    = df_idx["Dolar_Kuru"].pct_change(21).values * 100
     df["3Ay_Getiri"]      = df_idx["Dolar_Kuru"].pct_change(63).values * 100
-
+    
     df["Hover_Tarih"] = df.apply(
         lambda r: f"{int(r['Tarih'].day)} {TR_AY_UZUN.get(r['Tarih'].month,'')} {int(r['Tarih'].year)}", axis=1)
     df["_kur_str"]     = df["Dolar_Kuru"].apply(tr_fmt_kur)
     df["_onc_kur_str"] = df["Onceki_Kur"].apply(tr_fmt_kur)
     df["_pct_str"]     = df["Yuzde_Degisim"].apply(tr_fmt_pct)
-
+    
     return df
 
-
 def spread_hesapla(df_raw, doviz="USD"):
-    """Alış-Satış spread analizi. Kolon adlarını dinamik olarak bulur."""
-    # Olası kolon adı varyantları
-    a_candidates = [f"TP_DK_{doviz}_A", f"TP_DK_{doviz}_A_YTL"]
-    s_candidates = [f"TP_DK_{doviz}_S", f"TP_DK_{doviz}_S_YTL"]
-
-    a_col = next((c for c in a_candidates if c in df_raw.columns), None)
-    s_col = next((c for c in s_candidates if c in df_raw.columns), None)
-
-    if not a_col or not s_col:
+    """Alış-Satış spread analizi."""
+    
+    a_col = f"TP_DK_{doviz}_A_YTL"
+    s_col = f"TP_DK_{doviz}_S_YTL"
+    
+    if a_col not in df_raw.columns or s_col not in df_raw.columns:
         return None
-
+    
     sp = df_raw[["Tarih", a_col, s_col]].dropna().copy()
     sp = sp.rename(columns={a_col: f"TP_DK_{doviz}_A", s_col: f"TP_DK_{doviz}_S"})
     sp["Spread_TL"]  = sp[f"TP_DK_{doviz}_S"] - sp[f"TP_DK_{doviz}_A"]
     sp["Spread_Pct"] = (sp["Spread_TL"] / sp[f"TP_DK_{doviz}_A"]) * 100
     return sp
-
 
 def forward_analysis(df, threshold, periods):
     events = df[df["Abs_Degisim"] >= threshold].copy()
@@ -367,38 +378,34 @@ with st.sidebar:
         letter-spacing:0.15em;color:#1b6cf2;padding:16px 0 12px 0;border-bottom:1px solid #1e2d4a;">
         ◈ Veri Ayarları</div>""", unsafe_allow_html=True)
     st.markdown("<br>", unsafe_allow_html=True)
-
+    
+    # API KEY uyarısı
+    if EVDS_API_KEY == "EDS05ZLAlI":
+        st.warning("⚠️ Lütfen API anahtarınızı güncelleyin!")
+    
     doviz_sec = st.selectbox("Döviz", ["USD", "EUR"], index=0)
     tur_sec   = st.selectbox("Fiyat Türü", ["Alis", "Satis"],
                               format_func=lambda x: "Alış" if x == "Alis" else "Satış", index=0)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("""<div style="font-family:'DM Mono',monospace;font-size:0.65rem;color:#4a6080;
-        text-transform:uppercase;letter-spacing:0.1em;margin-bottom:8px;">Tarih Aralığı</div>""",
-        unsafe_allow_html=True)
-    import datetime
-    baslangic_dt = st.date_input(
-        "Başlangıç Tarihi",
-        value=datetime.date(2000, 1, 1),
-        min_value=datetime.date(2000, 1, 1),
-        max_value=datetime.date.today(),
-        format="DD.MM.YYYY",
-    )
-    bitis_dt = st.date_input(
-        "Bitiş Tarihi",
-        value=datetime.date.today(),
-        min_value=datetime.date(2000, 1, 2),
-        max_value=datetime.date.today(),
-        format="DD.MM.YYYY",
-    )
-
-    baslangic_tarih = baslangic_dt.strftime("%d-%m-%Y")
-    bitis_tarih     = bitis_dt.strftime("%d-%m-%Y")
-
+    
+    # Tarih aralığı seçimi
+    st.markdown("### 📅 Tarih Aralığı")
+    bugun = datetime.now()
+    default_start = datetime(2020, 1, 1)
+    
+    baslangic = st.date_input("Başlangıç Tarihi", value=default_start, max_value=bugun)
+    bitis = st.date_input("Bitiş Tarihi", value=bugun, max_value=bugun)
+    
+    if baslangic > bitis:
+        st.error("Başlangıç tarihi bitiş tarihinden sonra olamaz!")
+        baslangic, bitis = bitis, baslangic
+    
+    baslangic_str = baslangic.strftime("%d-%m-%Y")
+    bitis_str = bitis.strftime("%d-%m-%Y")
+    
     if st.button("🔄 Veriyi Yenile", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
-
+    
     st.markdown("""<div style="font-family:'DM Mono',monospace;font-size:0.65rem;text-transform:uppercase;
         letter-spacing:0.15em;color:#1b6cf2;padding:20px 0 12px 0;border-bottom:1px solid #1e2d4a;">
         ◈ Parametre Kontrolü</div>""", unsafe_allow_html=True)
@@ -406,13 +413,13 @@ with st.sidebar:
     esik            = st.slider("Günlük Sıçrama Eşiği (%)", 0.5, 10.0, 2.0, 0.1)
     gosterim_sec    = st.selectbox("Gösterilecek Sıçrama Sayısı", [10, 20, 30, 50, 75, 100, "Tümü"], index=2)
     yon             = st.radio("Sıçrama Yönü", ["Tümü", "Yalnız Pozitif ↑", "Yalnız Negatif ↓"])
-
+    
     st.markdown("""<div style="font-family:'DM Mono',monospace;font-size:0.65rem;text-transform:uppercase;
         letter-spacing:0.15em;color:#1b6cf2;padding:20px 0 12px 0;border-bottom:1px solid #1e2d4a;">
         ◈ Etiket Ayarı</div>""", unsafe_allow_html=True)
     st.markdown("<br>", unsafe_allow_html=True)
     etiket_quantile = st.slider("Günlük — Etiketlenecek Dilim (%)", 10, 100, 40, 5)
-
+    
     st.markdown("""<div style="font-family:'DM Mono',monospace;font-size:0.65rem;text-transform:uppercase;
         letter-spacing:0.15em;color:#1b6cf2;padding:20px 0 12px 0;border-bottom:1px solid #1e2d4a;">
         ◈ Haftalık / Gün Analizi</div>""", unsafe_allow_html=True)
@@ -421,13 +428,13 @@ with st.sidebar:
     haftalik_etiket = st.slider("Haftalık — Etiketlenecek Dilim (%)", 10, 100, 40, 5)
     haftalik_yon    = st.radio("Haftalık Yön", ["Tümü", "Yalnız Pozitif ↑", "Yalnız Negatif ↓"], key="haftalik_yon")
     gun_filtre      = st.multiselect("Gün Filtresi", ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], default=[])
-
+    
     st.markdown("""<div style="font-family:'DM Mono',monospace;font-size:0.65rem;text-transform:uppercase;
         letter-spacing:0.15em;color:#1b6cf2;padding:20px 0 12px 0;border-bottom:1px solid #1e2d4a;">
         ◈ İleri Analiz</div>""", unsafe_allow_html=True)
     st.markdown("<br>", unsafe_allow_html=True)
     fwd_threshold   = st.slider("Tetikleyici Eşik (%)", 0.5, 15.0, 3.0, 0.5)
-
+    
     st.markdown("""<div style="font-size:0.72rem;color:#3a5070;margin-top:20px;line-height:1.9;
         border-top:1px solid #1e2d4a;padding-top:12px;">
         Kaynak: <span style="color:#4a9eff;font-family:'DM Mono',monospace;">TCMB EVDS</span><br>
@@ -436,18 +443,25 @@ with st.sidebar:
     </div>""", unsafe_allow_html=True)
 
 # ─── VERİ ÇEKME ──────────────────────────────────────────────────────────────
-# Tarih değişince cache otomatik bozulsun (key olarak tarihleri geç)
-with st.spinner("🌐 TCMB EVDS'den veri çekiliyor..."):
-    df_raw = evds_veri_cek(baslangic=baslangic_tarih, bitis=bitis_tarih)
+with st.spinner(f"🌐 TCMB EVDS'den {baslangic_str} - {bitis_str} arası veri çekiliyor..."):
+    df_raw = evds_veri_cek(baslangic_str, bitis_str)
 
-if df_raw is None:
-    st.error("Veri çekilemedi. Lütfen API bağlantınızı kontrol edin ve sayfayı yenileyin.")
+if df_raw is None or df_raw.empty:
+    st.error("""
+    ❌ Veri çekilemedi! Lütfen şunları kontrol edin:
+    
+    1. API anahtarınızı https://evds2.tcmb.gov.tr adresinden yenileyin
+    2. Anahtarı kodun başındaki `EVDS_API_KEY` değişkenine yapıştırın
+    3. İnternet bağlantınızı kontrol edin
+    4. Seçtiğiniz tarih aralığında veri olduğundan emin olun
+    """)
     st.stop()
 
 with st.spinner(f"{'EUR' if doviz_sec == 'EUR' else 'USD'} verisi işleniyor..."):
     df = veri_isle_api(df_raw, doviz_sec, tur_sec)
 
-if df is None:
+if df is None or df.empty:
+    st.error(f"{doviz_sec} {tur_sec} verisi işlenemedi!")
     st.stop()
 
 doviz_label = f"{doviz_sec}/TRY {'Alış' if tur_sec == 'Alis' else 'Satış'}"
@@ -468,14 +482,14 @@ neg_j      = top_sic[top_sic["Yuzde_Degisim"] < 0].copy()
 
 poz_say = (df["Yuzde_Degisim"] > 0).sum()
 neg_say = (df["Yuzde_Degisim"] < 0).sum()
-oran    = len(sicramalar) / len(df) * 100
-max_j   = df["Yuzde_Degisim"].max()
-min_j   = df["Yuzde_Degisim"].min()
+oran    = len(sicramalar) / len(df) * 100 if len(df) > 0 else 0
+max_j   = df["Yuzde_Degisim"].max() if len(df) > 0 else 0
+min_j   = df["Yuzde_Degisim"].min() if len(df) > 0 else 0
 
 # ─── KPI CARDS ───────────────────────────────────────────────────────────────
 st.markdown('<div class="section-label">◈ Genel İstatistikler</div>', unsafe_allow_html=True)
-son_kur  = df["Dolar_Kuru"].iloc[-1]
-son_degis = df["Yuzde_Degisim"].iloc[-1]
+son_kur  = df["Dolar_Kuru"].iloc[-1] if len(df) > 0 else 0
+son_degis = df["Yuzde_Degisim"].iloc[-1] if len(df) > 0 else 0
 st.markdown(f"""
 <div class="metric-row">
   <div class="metric-card">
@@ -1193,65 +1207,83 @@ with tab5:
 # ════════════ TAB 6 ════════════
 with tab6:
     st.markdown('<div class="section-label">◈ Sıçrama Tablosu</div>', unsafe_allow_html=True)
-    tbl = top_sic.copy().reset_index(drop=True)
-    tbl.index = tbl.index + 1
-    tbl_show = pd.DataFrame({
-        "#":          tbl.index,
-        "Tarih":      tbl["Tarih"].dt.strftime("%d.%m.%Y"),
-        "Yıl":        tbl["Yil"],
-        "Ay":         tbl["Ay_Adi"],
-        "Gün Adı":    tbl["Gun_Adi"],
-        "Kur":        tbl["Dolar_Kuru"].apply(tr_fmt_kur),
-        "Önceki Kur": tbl["Onceki_Kur"].apply(tr_fmt_kur),
-        "Değişim %":  tbl["Yuzde_Degisim"].apply(tr_fmt_pct),
-        "TL Δ":       tbl["TL_Degisim"].apply(lambda x: tr_fmt_kur(x, 4)),
-        "Gün Farkı":  tbl["Gun_Farki"].astype(int),
-    })
-    st.dataframe(tbl_show, use_container_width=True, height=420)
+    if len(top_sic) > 0:
+        tbl = top_sic.copy().reset_index(drop=True)
+        tbl.index = tbl.index + 1
+        tbl_show = pd.DataFrame({
+            "#":          tbl.index,
+            "Tarih":      tbl["Tarih"].dt.strftime("%d.%m.%Y"),
+            "Yıl":        tbl["Yil"],
+            "Ay":         tbl["Ay_Adi"],
+            "Gün Adı":    tbl["Gun_Adi"],
+            "Kur":        tbl["Dolar_Kuru"].apply(tr_fmt_kur),
+            "Önceki Kur": tbl["Onceki_Kur"].apply(tr_fmt_kur),
+            "Değişim %":  tbl["Yuzde_Degisim"].apply(tr_fmt_pct),
+            "TL Δ":       tbl["TL_Degisim"].apply(lambda x: tr_fmt_kur(x, 4)),
+            "Gün Farkı":  tbl["Gun_Farki"].astype(int),
+        })
+        st.dataframe(tbl_show, use_container_width=True, height=420)
+    else:
+        st.info("Seçilen kriterlerde sıçrama bulunamadı.")
 
     c1, c2 = st.columns(2)
     with c1:
         st.markdown('<div class="section-label">◈ Aylık Özet</div>', unsafe_allow_html=True)
-        aylik = sicramalar.groupby("Ay_Adi")["Abs_Degisim"].agg(["count","mean","max","min"]).round(3)
-        aylik.columns = ["Toplam","Ort. %","Maks %","Min %"]
-        st.dataframe(aylik, use_container_width=True)
+        if len(sicramalar) > 0:
+            aylik = sicramalar.groupby("Ay_Adi")["Abs_Degisim"].agg(["count","mean","max","min"]).round(3)
+            aylik.columns = ["Toplam","Ort. %","Maks %","Min %"]
+            st.dataframe(aylik, use_container_width=True)
+        else:
+            st.info("Veri yok")
     with c2:
         st.markdown('<div class="section-label">◈ Yıllık Özet</div>', unsafe_allow_html=True)
-        yillik = sicramalar.groupby("Yil").agg(
-            Toplam=("Abs_Degisim","count"), Ort_Pct=("Abs_Degisim","mean"),
-            Pozitif=("Yuzde_Degisim", lambda x: (x>0).sum()),
-            Negatif=("Yuzde_Degisim", lambda x: (x<0).sum()),
-            Maks=("Abs_Degisim","max")
-        ).round(3)
-        yillik.columns = ["Toplam","Ort. %","Pozitif","Negatif","Maks %"]
-        st.dataframe(yillik, use_container_width=True)
+        if len(sicramalar) > 0:
+            yillik = sicramalar.groupby("Yil").agg(
+                Toplam=("Abs_Degisim","count"), Ort_Pct=("Abs_Degisim","mean"),
+                Pozitif=("Yuzde_Degisim", lambda x: (x>0).sum()),
+                Negatif=("Yuzde_Degisim", lambda x: (x<0).sum()),
+                Maks=("Abs_Degisim","max")
+            ).round(3)
+            yillik.columns = ["Toplam","Ort. %","Pozitif","Negatif","Maks %"]
+            st.dataframe(yillik, use_container_width=True)
+        else:
+            st.info("Veri yok")
 
     st.markdown('<div class="section-label">◈ Haftalık Değişim Tablosu (Pzt → Cum)</div>', unsafe_allow_html=True)
-    hf_t = hf_global[["PztTarih","CumTarih","PztKur","CumKur","HaftaDegisim"]].copy()
-    hf_t.insert(0, "Hafta", hf_t["PztTarih"].dt.strftime("%d.%m.%Y") + " – " + hf_t["CumTarih"].dt.strftime("%d.%m.%Y"))
-    hf_t.insert(0, "Yıl", hf_t["PztTarih"].dt.year)
-    hf_t["Pzt Kur"]   = hf_t["PztKur"].apply(tr_fmt_kur)
-    hf_t["Cum Kur"]   = hf_t["CumKur"].apply(tr_fmt_kur)
-    hf_t["Değişim %"] = hf_t["HaftaDegisim"].apply(tr_fmt_pct)
-    hf_t["Yön"]       = hf_t["HaftaDegisim"].apply(lambda x: "↑" if x > 0 else "↓")
-    hf_t = hf_t[["Yıl","Hafta","Pzt Kur","Cum Kur","Değişim %","Yön"]].sort_values("Hafta", ascending=False).reset_index(drop=True)
-    hf_t.index = hf_t.index + 1
-    st.dataframe(hf_t, use_container_width=True, height=420)
+    if len(hf_global) > 0:
+        hf_t = hf_global[["PztTarih","CumTarih","PztKur","CumKur","HaftaDegisim"]].copy()
+        hf_t.insert(0, "Hafta", hf_t["PztTarih"].dt.strftime("%d.%m.%Y") + " – " + hf_t["CumTarih"].dt.strftime("%d.%m.%Y"))
+        hf_t.insert(0, "Yıl", hf_t["PztTarih"].dt.year)
+        hf_t["Pzt Kur"]   = hf_t["PztKur"].apply(tr_fmt_kur)
+        hf_t["Cum Kur"]   = hf_t["CumKur"].apply(tr_fmt_kur)
+        hf_t["Değişim %"] = hf_t["HaftaDegisim"].apply(tr_fmt_pct)
+        hf_t["Yön"]       = hf_t["HaftaDegisim"].apply(lambda x: "↑" if x > 0 else "↓")
+        hf_t = hf_t[["Yıl","Hafta","Pzt Kur","Cum Kur","Değişim %","Yön"]].sort_values("Hafta", ascending=False).reset_index(drop=True)
+        hf_t.index = hf_t.index + 1
+        st.dataframe(hf_t, use_container_width=True, height=420)
+    else:
+        st.info("Haftalık veri yok")
 
     st.markdown('<div class="section-label">◈ Dışa Aktar</div>', unsafe_allow_html=True)
     dc1, dc2 = st.columns(2)
     with dc1:
-        csv = top_sic.to_csv(index=False).encode("utf-8-sig")
-        st.download_button("CSV İndir", csv, "sicramalar.csv", "text/csv")
+        if len(top_sic) > 0:
+            csv = top_sic.to_csv(index=False).encode("utf-8-sig")
+            st.download_button("CSV İndir", csv, "sicramalar.csv", "text/csv")
     with dc2:
         buf = io.BytesIO()
         with pd.ExcelWriter(buf, engine="openpyxl") as w:
-            top_sic.to_excel(w, sheet_name="Sicramalar", index=False)
-            hf_t.to_excel(w, sheet_name="Haftalik", index=False)
+            if len(top_sic) > 0:
+                top_sic.to_excel(w, sheet_name="Sicramalar", index=False)
+            if len(hf_global) > 0:
+                hf_t.to_excel(w, sheet_name="Haftalik", index=False)
             df.to_excel(w, sheet_name="Tum_Veri", index=False)
-            aylik.to_excel(w, sheet_name="Aylik")
-            yillik.to_excel(w, sheet_name="Yillik")
-            if sp_df is not None:
+            if len(sicramalar) > 0:
+                if 'aylik' in locals():
+                    aylik.to_excel(w, sheet_name="Aylik")
+                if 'yillik' in locals():
+                    yillik.to_excel(w, sheet_name="Yillik")
+            if sp_df is not None and len(sp_df) > 0:
                 sp_df.to_excel(w, sheet_name="Spread", index=False)
         st.download_button("Excel İndir (Tüm Analiz)", buf.getvalue(), "doviz_analiz.xlsx",
                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
