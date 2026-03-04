@@ -5,6 +5,10 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime, date
 import requests
+try:
+    from evds import evdsAPI
+except ImportError:
+    evdsAPI = None
 import io
 
 st.set_page_config(
@@ -208,10 +212,41 @@ def evds_cek(api_key: str, seri: str, baslangic: str, bitis: str):
     start = parse_dt(baslangic)
     end   = parse_dt(bitis)
 
+    # evds paketi varsa kullan (EVDS3 uyumlu), yoksa requests fallback
+    if evdsAPI is not None:
+        try:
+            client = evdsAPI(api_key.strip(), evds3=True)
+            raw_df = client.get_data(
+                [seri],
+                startdate=fmt_dt(start),
+                enddate=fmt_dt(end),
+                frequency=1
+            )
+            if raw_df is not None and len(raw_df) > 0:
+                tarih_col = next((c for c in raw_df.columns if c.lower() == "tarih"), None)
+                col_key   = seri.replace(".", "_")
+                if col_key not in raw_df.columns:
+                    available = [c for c in raw_df.columns if c not in (tarih_col, "UNIXTIME")]
+                    col_key   = available[0] if available else None
+                if tarih_col and col_key:
+                    df = raw_df[[tarih_col, col_key]].copy()
+                    df.columns = ["Tarih", "Dolar_Kuru"]
+                    df["Tarih"] = pd.to_datetime(df["Tarih"], format="%d-%m-%Y", errors="coerce")
+                    df = df.dropna(subset=["Tarih"])
+                    df["Dolar_Kuru"] = pd.to_numeric(
+                        df["Dolar_Kuru"].astype(str).str.replace(",", "."), errors="coerce"
+                    )
+                    df = df.dropna(subset=["Dolar_Kuru"])
+                    df = df.sort_values("Tarih").reset_index(drop=True)
+                    if len(df) > 0:
+                        return df, None
+        except Exception:
+            pass  # evds paketi çalışmadı, requests ile dene
+
+    # requests fallback — chunk'lar halinde çek
     from urllib.parse import urlencode
 
     def fetch_chunk(s, e):
-        """Tek chunk çek, (items_list, hata) döndür."""
         params = {
             "series":    seri,
             "startDate": fmt_dt(s),
@@ -219,15 +254,14 @@ def evds_cek(api_key: str, seri: str, baslangic: str, bitis: str):
             "type":      "json",
             "frequency": "1",
         }
-        # Önce evds2, olmazsa evds3 dene
         for base in [
             "https://evds3.tcmb.gov.tr/service/evds/",
-            "https://evds3.tcmb.gov.tr/service/evds/",
+            "https://evds2.tcmb.gov.tr/service/evds/",
         ]:
             url = base + urlencode(params)
             try:
                 r = requests.get(url, headers={"key": api_key.strip()}, timeout=30)
-            except Exception as ex:
+            except Exception:
                 continue
             if r.status_code not in (200, 201):
                 continue
@@ -235,39 +269,43 @@ def evds_cek(api_key: str, seri: str, baslangic: str, bitis: str):
             if not raw or raw.startswith("<"):
                 continue
             try:
-                data = r.json()
+                data  = r.json()
                 items = data.get("items", [])
                 if items:
-                    return items, None
+                    return items
             except Exception:
                 continue
-        return [], None
+        return []
 
-    # Önce key geçerli mi diye küçük bir test yap
-    test_items, _ = fetch_chunk(end - timedelta(days=10), end)
-    if not test_items:
+    # Test isteği
+    test = fetch_chunk(end - timedelta(days=10), end)
+    if not test:
         return None, (
             "EVDS'den veri alınamadı.\n\n"
             "Olası nedenler:\n"
             "• API anahtarı yanlış veya süresi dolmuş\n"
-            "• evds3.tcmb.gov.tr hesabınızda seri yetkisi yok\n"
+            "• evds2.tcmb.gov.tr hesabınızda seri yetkisi yok\n"
             "• Seri kodu hatalı: " + seri
         )
 
     all_records = []
-    chunk_start = start
+    chunk_start  = start
+    col_key      = None
 
     while chunk_start < end:
         chunk_end = min(chunk_start + timedelta(days=1400), end)
-        items, _ = fetch_chunk(chunk_start, chunk_end)
+        items     = fetch_chunk(chunk_start, chunk_end)
 
-        col_key = seri.replace(".", "_")
-        if items:
+        if items and col_key is None:
+            ck = seri.replace(".", "_")
             sample = items[0]
-            if col_key not in sample:
+            if ck in sample:
+                col_key = ck
+            else:
                 available = [k for k in sample.keys() if k not in ("Tarih", "UNIXTIME")]
-                col_key = available[0] if available else col_key
+                col_key   = available[0] if available else ck
 
+        if items and col_key:
             for it in items:
                 tarih = it.get("Tarih", "")
                 deger = it.get(col_key, None)
@@ -372,7 +410,7 @@ with st.sidebar:
     api_key = st.text_input(
         "API Anahtarı", value="EDS05ZLAlI",
         type="password",
-        help="evds3.tcmb.gov.tr → Kullanıcı Paneli → API Anahtarı"
+        help="evds2.tcmb.gov.tr → Kullanıcı Paneli → API Anahtarı"
     )
     seri_sec = st.selectbox("Seri", list(SERILER.keys()), index=0)
     seri_kod = SERILER[seri_sec]
@@ -1163,4 +1201,3 @@ st.markdown("""
     USDTRY ANALYSIS PLATFORM · STREAMLIT + PLOTLY · EVDS API
 </div>
 """, unsafe_allow_html=True)
-
