@@ -196,40 +196,70 @@ def apply_base(fig, **kwargs):
 @st.cache_data(ttl=3600, show_spinner=False)
 def evds_cek(api_key: str, seri: str, baslangic: str, bitis: str):
     """EVDS'den veri çek, (df, hata_mesaji) döndür."""
-    url = (
-        f"https://evds2.tcmb.gov.tr/service/evds/"
-        f"series={seri}"
-        f"&startDate={baslangic}"
-        f"&endDate={bitis}"
-        f"&type=json"
-        f"&frequency=1"
+    # EVDS resmi URL formatı
+    url = "https://evds2.tcmb.gov.tr/service/evds/series={}&startDate={}&endDate={}&type=json&frequency=1".format(
+        seri, baslangic, bitis
     )
     try:
-        r = requests.get(url, headers={"key": api_key}, timeout=30)
-        r.raise_for_status()
-        data = r.json()
+        r = requests.get(url, headers={"key": api_key.strip()}, timeout=30)
     except requests.exceptions.Timeout:
         return None, "EVDS bağlantısı zaman aşımına uğradı (30s)."
     except requests.exceptions.ConnectionError:
         return None, "EVDS'e bağlanılamadı. İnternet bağlantınızı kontrol edin."
     except Exception as e:
-        return None, f"API hatası: {e}"
+        return None, f"Bağlantı hatası: {e}"
+
+    # HTTP hata kodu
+    if r.status_code == 401:
+        return None, "API anahtarı geçersiz (401). evds2.tcmb.gov.tr'den anahtarınızı kontrol edin."
+    if r.status_code == 403:
+        return None, "Erişim reddedildi (403). API anahtarı bu seriye yetkili olmayabilir."
+    if r.status_code != 200:
+        return None, f"EVDS HTTP {r.status_code} hatası döndürdü."
+
+    # Boş veya HTML response kontrolü
+    raw = r.text.strip()
+    if not raw:
+        return None, "EVDS boş yanıt döndürdü. API anahtarını kontrol edin."
+    if raw.startswith("<"):
+        # HTML hata sayfası geldi
+        if "401" in raw or "Unauthorized" in raw:
+            return None, "API anahtarı geçersiz. EVDS HTML hata sayfası döndürdü."
+        return None, f"EVDS HTML yanıt döndürdü (JSON bekleniyor). Yanıt başlangıcı: {raw[:120]}"
+
+    try:
+        data = r.json()
+    except Exception as e:
+        return None, f"JSON parse hatası: {e}\nYanıt: {raw[:200]}"
 
     items = data.get("items", [])
     if not items:
-        return None, "API boş yanıt döndürdü. API anahtarını ve seri kodunu kontrol edin."
+        # EVDS bazen hata detayını items yerine error alanında döndürür
+        err_msg = data.get("error", data.get("message", ""))
+        return None, f"API boş yanıt döndürdü. {err_msg or 'API anahtarını ve seri kodunu kontrol edin.'}"
 
     # Seri kodundaki noktaları alt çizgiye çevir (JSON key formatı)
     col_key = seri.replace(".", "_")
+
+    # Olası key varyasyonlarını dene
+    sample = items[0] if items else {}
+    if col_key not in sample:
+        # EVDS bazen farklı key formatı kullanır, tüm keyleri göster
+        available = [k for k in sample.keys() if k != "Tarih" and k != "UNIXTIME"]
+        if available:
+            col_key = available[0]
+        else:
+            return None, f"Veri sütunu bulunamadı. Mevcut alanlar: {list(sample.keys())}"
+
     records = []
     for it in items:
         tarih = it.get("Tarih", "")
         deger = it.get(col_key, None)
-        if tarih and deger and deger not in ("", None):
+        if tarih and deger and str(deger).strip() not in ("", "None", "ND"):
             records.append({"Tarih": tarih, "Dolar_Kuru": deger})
 
     if not records:
-        return None, f"Veri bulunamadı. Seri: {seri}, anahtar sütun: {col_key}"
+        return None, f"Geçerli veri satırı bulunamadı. Seri: {seri}, Dönem: {baslangic}–{bitis}"
 
     df = pd.DataFrame(records)
     df["Tarih"] = pd.to_datetime(df["Tarih"], format="%d-%m-%Y", errors="coerce")
