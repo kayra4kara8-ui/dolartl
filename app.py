@@ -12,7 +12,6 @@ try:
 except ImportError:
     evdsAPI = None
 import io
-import time
 
 st.set_page_config(
     page_title="USDTRY Analiz Platformu",
@@ -199,196 +198,109 @@ def apply_base(fig, **kwargs):
     fig.update_layout(**cfg)
     return fig
 
-# ─── EVDS API (DÜZELTİLMİŞ VERSİYON) ─────────────────────────────────────────
-@st.cache_data(ttl=3600, show_spinner=False)
+# ─── EVDS API ─────────────────────────────────────────────────────────────────
+@st.cache_data(ttl=0, show_spinner=False)
 def evds_cek(api_key: str, seri: str, baslangic: str, bitis: str):
-    """EVDS'den veri çek - tüm tarih aralığını getirir."""
-    
+    """EVDS — sondan başa chunk, her chunk 90 günlük."""
+    from datetime import datetime, timedelta
+    from urllib.parse import urlencode
+    import urllib3
+    urllib3.disable_warnings()
+
     def parse_dt(s):
         return datetime.strptime(s, "%d-%m-%Y")
-    
+
     def fmt_dt(d):
         return d.strftime("%d-%m-%Y")
-    
-    def fetch_chunk(s, e):
-        """Bir tarih aralığını çek."""
+
+    def fetch(s, e):
         params = {
-            "series": seri,
+            "series":    seri,
             "startDate": fmt_dt(s),
-            "endDate": fmt_dt(e),
-            "type": "json",
-            "frequency": "1",  # Günlük frekans
+            "endDate":   fmt_dt(e),
+            "type":      "json",
+            "frequency": "1",
         }
-        qs = "&".join([f"{k}={v}" for k, v in params.items()])
-        
-        # Alternatif endpoint'ler
-        endpoints = [
-            f"https://evds2.tcmb.gov.tr/service/evds/?{qs}",
-            f"https://evds3.tcmb.gov.tr/service/evds/?{qs}",
-            f"https://evds.tcmb.gov.tr/service/evds/?{qs}",
-        ]
-        
-        for url in endpoints:
+        qs = urlencode(params)
+        for base in [
+            "https://evds2.tcmb.gov.tr/service/evds/",
+            "https://evds3.tcmb.gov.tr/service/evds/",
+        ]:
             try:
-                headers = {"key": api_key.strip()}
-                r = requests.get(url, headers=headers, timeout=30, verify=False)
-                
-                if r.status_code == 200:
-                    data = r.json()
-                    if "items" in data and data["items"]:
-                        return data["items"]
-                    elif "error" in data:
-                        continue
+                r = requests.get(
+                    base + qs,
+                    headers={"key": api_key.strip()},
+                    timeout=20,
+                    verify=False
+                )
+                if r.status_code != 200:
+                    continue
+                raw = r.text.strip()
+                if not raw or raw.startswith("<"):
+                    continue
+                data = r.json()
+                items = data.get("items", [])
+                if items:
+                    return items
             except Exception:
                 continue
-        return None
-    
+        return []
+
     start = parse_dt(baslangic)
-    end = parse_dt(bitis)
-    
-    # Tüm veriyi topla
+    end   = parse_dt(bitis)
+
+    # Bağlantı testi
+    test = fetch(end - timedelta(days=5), end)
+    if not test:
+        return None, "API bağlantısı kurulamadı. Anahtar: " + api_key.strip()[:6] + "..."
+
+    # col_key bul
+    sample  = test[0]
+    ck      = seri.replace(".", "_")
+    col_key = ck if ck in sample else next(
+        (k for k in sample if k not in ("Tarih", "UNIXTIME")), ck
+    )
+
+    # SONDAN BAŞA — 90 günlük pencereler
+    CHUNK = timedelta(days=90)
     all_records = []
-    chunk_start = start
-    chunk_size_days = 365  # 1 yıllık chunk'lar
-    
-    # Progress bar
-    progress_text = "Veri çekiliyor..."
-    progress_bar = st.progress(0, text=progress_text)
-    
-    total_days = (end - start).days
-    chunks = (total_days // chunk_size_days) + 1
-    chunk_count = 0
-    
-    while chunk_start <= end:
-        chunk_end = min(chunk_start + timedelta(days=chunk_size_days - 1), end)
-        
-        chunk_count += 1
-        progress = min(chunk_count / chunks, 1.0)
-        progress_bar.progress(progress, text=f"{progress_text} ({chunk_start.strftime('%d.%m.%Y')} - {chunk_end.strftime('%d.%m.%Y')})")
-        
-        items = fetch_chunk(chunk_start, chunk_end)
-        
-        if items:
-            for item in items:
-                tarih = item.get("Tarih", "")
-                if not tarih:
-                    continue
-                
-                # Seri adını dene (farklı formatlarda)
-                seri_alt = seri.replace(".", "_")
-                deger = None
-                
-                # Önce tam seri adını dene
-                if seri in item:
-                    deger = item[seri]
-                elif seri_alt in item:
-                    deger = item[seri_alt]
-                else:
-                    # İlk sayısal sütunu bul
-                    for key, val in item.items():
-                        if key not in ["Tarih", "UNIXTIME"] and val not in [None, "", "ND"]:
-                            try:
-                                float(str(val).replace(",", "."))
-                                deger = val
-                                break
-                            except:
-                                continue
-                
-                if deger and str(deger).strip() not in ("", "None", "ND"):
-                    all_records.append({
-                        "Tarih": tarih,
-                        "Dolar_Kuru": deger
-                    })
-        
-        chunk_start = chunk_end + timedelta(days=1)
-        time.sleep(0.2)  # API limitlerini aşmamak için
-    
-    progress_bar.empty()
-    
+    seen = set()
+
+    chunk_end = end
+    while chunk_end > start:
+        chunk_start = max(chunk_end - CHUNK, start)
+        items = fetch(chunk_start, chunk_end)
+
+        for it in items:
+            tarih = it.get("Tarih", "")
+            deger = it.get(col_key, None)
+            if tarih and tarih not in seen and deger and str(deger).strip() not in ("", "None", "ND"):
+                all_records.append({"Tarih": tarih, "Dolar_Kuru": deger})
+                seen.add(tarih)
+
+        chunk_end = chunk_start - timedelta(days=1)
+
     if not all_records:
-        # EVDS paketini dene
-        if evdsAPI is not None:
-            try:
-                client = evdsAPI(api_key.strip(), legacySSL=True)
-                raw_df = client.get_data([seri], startdate=baslangic, enddate=bitis)
-                
-                if raw_df is not None and len(raw_df) > 1:
-                    raw_df = raw_df[1:].reset_index(drop=True)
-                    
-                    # Tarih sütununu bul
-                    tarih_col = next((c for c in raw_df.columns if c.lower() == "tarih"), None)
-                    
-                    # Değer sütununu bul
-                    val_col = seri.replace(".", "_")
-                    if val_col not in raw_df.columns:
-                        available = [c for c in raw_df.columns if c not in [tarih_col, "UNIXTIME"]]
-                        val_col = available[0] if available else None
-                    
-                    if tarih_col and val_col:
-                        df = raw_df[[tarih_col, val_col]].copy()
-                        df.columns = ["Tarih", "Dolar_Kuru"]
-                        df["Tarih"] = pd.to_datetime(df["Tarih"], format="%d-%m-%Y", errors="coerce")
-                        df = df.dropna(subset=["Tarih"])
-                        df["Dolar_Kuru"] = pd.to_numeric(
-                            df["Dolar_Kuru"].astype(str).str.replace(",", "."), 
-                            errors="coerce"
-                        )
-                        df = df.dropna(subset=["Dolar_Kuru"])
-                        df = df.sort_values("Tarih").reset_index(drop=True)
-                        
-                        if len(df) > 0:
-                            return df, None
-            except Exception as ex:
-                return None, f"EVDS paketi hatası: {ex}"
-        
-        return None, f"Veri bulunamadı. Tarih aralığı: {baslangic} - {bitis}"
-    
-    # DataFrame oluştur
+        return None, "Hiç veri bulunamadı."
+
     df = pd.DataFrame(all_records)
-    df = df.drop_duplicates(subset=["Tarih"])
-    
-    # Tarih formatını düzenle
     df["Tarih"] = pd.to_datetime(df["Tarih"], format="%d-%m-%Y", errors="coerce")
     df = df.dropna(subset=["Tarih"])
-    
-    # Değerleri sayısala çevir
     df["Dolar_Kuru"] = pd.to_numeric(
-        df["Dolar_Kuru"].astype(str).str.replace(",", "."), 
-        errors="coerce"
+        df["Dolar_Kuru"].astype(str).str.replace(",", "."), errors="coerce"
     )
     df = df.dropna(subset=["Dolar_Kuru"])
-    
-    # Tarihe göre sırala
     df = df.sort_values("Tarih").reset_index(drop=True)
-    
-    # Eksik tarihleri kontrol et
-    beklenen_tarihler = pd.date_range(start=start, end=end, freq="D")
-    mevcut_tarihler = set(df["Tarih"].dt.date)
-    
-    if len(mevcut_tarihler) < len(beklenen_tarihler):
-        eksik_yuzde = (1 - len(mevcut_tarihler) / len(beklenen_tarihler)) * 100
-        if eksik_yuzde > 10:
-            st.warning(f"⚠ Verilerin %{eksik_yuzde:.1f}'i eksik. EVDS'de tüm günler için veri olmayabilir (hafta sonları ve tatiller).")
-    
     return df, None
-
 def veri_isle(df_raw):
     df = df_raw.copy()
-    
+
     # Aykırı değer düzeltme (eski TL → YTL)
-    if len(df) > 0:
-        medyan = df["Dolar_Kuru"].median()
-        if medyan > 0:
-            # 2005 öncesi veriler için (eski TL)
-            if df["Tarih"].min().year < 2005:
-                eski_tl_kosul = (df["Tarih"].dt.year < 2005) & (df["Dolar_Kuru"] > 1000000)
-                if eski_tl_kosul.any():
-                    df.loc[eski_tl_kosul, "Dolar_Kuru"] = df.loc[eski_tl_kosul, "Dolar_Kuru"] / 1000000
-            
-            # Diğer aykırı değerler
-            aykiri = (df["Dolar_Kuru"] > medyan * 100) | (df["Dolar_Kuru"] < medyan / 100)
-            if aykiri.any():
-                df.loc[aykiri, "Dolar_Kuru"] = df.loc[aykiri, "Dolar_Kuru"] / 1000
+    medyan = df["Dolar_Kuru"].median()
+    if medyan > 0:
+        aykiri = (df["Dolar_Kuru"] > medyan * 10) | (df["Dolar_Kuru"] < medyan / 10)
+        if aykiri.any():
+            df.loc[aykiri, "Dolar_Kuru"] = df.loc[aykiri, "Dolar_Kuru"] / 1000
 
     df["Onceki_Kur"]    = df["Dolar_Kuru"].shift(1)
     df["Onceki_Tarih"]  = df["Tarih"].shift(1)
@@ -454,6 +366,7 @@ st.markdown("""
 
 # ─── SIDEBAR ─────────────────────────────────────────────────────────────────
 with st.sidebar:
+    # ── API Ayarları
     st.markdown("""<div style="font-family:'DM Mono',monospace;font-size:0.65rem;text-transform:uppercase;
         letter-spacing:0.15em;color:#1b6cf2;padding:16px 0 12px 0;border-bottom:1px solid #1e2d4a;">
         ◈ EVDS API</div>""", unsafe_allow_html=True)
@@ -484,6 +397,7 @@ with st.sidebar:
             st.cache_data.clear()
             st.rerun()
 
+    # ── Analiz Parametreleri
     st.markdown("""<div style="font-family:'DM Mono',monospace;font-size:0.65rem;text-transform:uppercase;
         letter-spacing:0.15em;color:#1b6cf2;padding:20px 0 12px 0;border-bottom:1px solid #1e2d4a;">
         ◈ Parametre Kontrolü</div>""", unsafe_allow_html=True)
@@ -514,7 +428,7 @@ with st.sidebar:
 if "df_raw" not in st.session_state:
     st.session_state.df_raw   = None
     st.session_state.df       = None
-    st.session_state.api_info = None
+    st.session_state.api_info = None   # (seri, bas, bit, n_row)
     st.session_state.api_err  = None
 
 if veri_cek_btn:
@@ -932,7 +846,7 @@ with tab2:
                 pass
         return ""
 
-    styled = (hf_tablo.style.map(color_row, subset=["Değişim %"])
+    styled = (hf_tablo.style.applymap(color_row, subset=["Değişim %"])
         .set_properties(**{"background-color":"#0d1220","color":"#8aa0bf","border":"1px solid #1e2d4a","font-family":"DM Mono, monospace","font-size":"12px"})
         .set_table_styles([
             {"selector":"th","props":[("background-color","#080c14"),("color","#4a6080"),("font-family","DM Mono, monospace"),("font-size","11px"),("text-transform","uppercase"),("letter-spacing","0.08em"),("border","1px solid #1e2d4a"),("padding","8px 12px")]},
