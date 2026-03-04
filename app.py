@@ -3,8 +3,11 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import requests
 from datetime import datetime, date
+try:
+    from evds import evdsAPI
+except ImportError:
+    evdsAPI = None
 import io
 
 st.set_page_config(
@@ -196,73 +199,40 @@ def apply_base(fig, **kwargs):
 @st.cache_data(ttl=3600, show_spinner=False)
 def evds_cek(api_key: str, seri: str, baslangic: str, bitis: str):
     """EVDS'den veri çek, (df, hata_mesaji) döndür."""
-    # EVDS doğru URL formatı — key URL'de, sıra önemli
-    url = (
-        "https://evds2.tcmb.gov.tr/service/evds/"
-        "series={}&startDate={}&endDate={}&type=json&frequency=1&key={}"
-    ).format(seri, baslangic, bitis, api_key.strip())
+    if evdsAPI is None:
+        return None, "evds paketi yüklü değil. requirements.txt dosyasına 'evds' ekleyin."
     try:
-        r = requests.get(url, timeout=30)
-    except requests.exceptions.Timeout:
-        return None, "EVDS bağlantısı zaman aşımına uğradı (30s)."
-    except requests.exceptions.ConnectionError:
-        return None, "EVDS'e bağlanılamadı. İnternet bağlantınızı kontrol edin."
+        client = evdsAPI(api_key.strip())
+        # startdate / enddate formatı DD-MM-YYYY
+        raw = client.get_data([seri], startdate=baslangic, enddate=bitis)
     except Exception as e:
-        return None, f"Bağlantı hatası: {e}"
+        err = str(e)
+        if "401" in err or "Unauthorized" in err.lower():
+            return None, "API anahtarı geçersiz. evds2.tcmb.gov.tr'den kontrol edin."
+        return None, f"EVDS bağlantı hatası: {err}"
 
-    # HTTP hata kodu
-    if r.status_code == 401:
-        return None, "API anahtarı geçersiz (401). evds2.tcmb.gov.tr'den anahtarınızı kontrol edin."
-    if r.status_code == 403:
-        return None, "Erişim reddedildi (403). API anahtarı bu seriye yetkili olmayabilir."
-    if r.status_code != 200:
-        return None, f"EVDS HTTP {r.status_code} hatası döndürdü."
+    if raw is None or len(raw) == 0:
+        return None, "EVDS boş yanıt döndürdü. API anahtarı ve seri kodunu kontrol edin."
 
-    # Boş veya HTML response kontrolü
-    raw = r.text.strip()
-    if not raw:
-        return None, "EVDS boş yanıt döndürdü. API anahtarını kontrol edin."
-    if raw.startswith("<"):
-        # HTML hata sayfası geldi
-        if "401" in raw or "Unauthorized" in raw:
-            return None, "API anahtarı geçersiz. EVDS HTML hata sayfası döndürdü."
-        return None, f"EVDS HTML yanıt döndürdü (JSON bekleniyor). Yanıt başlangıcı: {raw[:120]}"
+    # Tarih sütunu
+    tarih_col = None
+    for c in raw.columns:
+        if c.lower() in ("tarih", "date"):
+            tarih_col = c
+            break
+    if tarih_col is None:
+        return None, f"Tarih sütunu bulunamadı. Sütunlar: {list(raw.columns)}"
 
-    try:
-        data = r.json()
-    except Exception as e:
-        return None, f"JSON parse hatası: {e}\nYanıt: {raw[:200]}"
-
-    items = data.get("items", [])
-    if not items:
-        # EVDS bazen hata detayını items yerine error alanında döndürür
-        err_msg = data.get("error", data.get("message", ""))
-        return None, f"API boş yanıt döndürdü. {err_msg or 'API anahtarını ve seri kodunu kontrol edin.'}"
-
-    # Seri kodundaki noktaları alt çizgiye çevir (JSON key formatı)
+    # Kur sütunu — seri kodundaki nokta → alt çizgi
     col_key = seri.replace(".", "_")
+    if col_key not in raw.columns:
+        available = [c for c in raw.columns if c not in (tarih_col, "UNIXTIME")]
+        if not available:
+            return None, f"Kur sütunu bulunamadı. Sütunlar: {list(raw.columns)}"
+        col_key = available[0]
 
-    # Olası key varyasyonlarını dene
-    sample = items[0] if items else {}
-    if col_key not in sample:
-        # EVDS bazen farklı key formatı kullanır, tüm keyleri göster
-        available = [k for k in sample.keys() if k != "Tarih" and k != "UNIXTIME"]
-        if available:
-            col_key = available[0]
-        else:
-            return None, f"Veri sütunu bulunamadı. Mevcut alanlar: {list(sample.keys())}"
-
-    records = []
-    for it in items:
-        tarih = it.get("Tarih", "")
-        deger = it.get(col_key, None)
-        if tarih and deger and str(deger).strip() not in ("", "None", "ND"):
-            records.append({"Tarih": tarih, "Dolar_Kuru": deger})
-
-    if not records:
-        return None, f"Geçerli veri satırı bulunamadı. Seri: {seri}, Dönem: {baslangic}–{bitis}"
-
-    df = pd.DataFrame(records)
+    df = raw[[tarih_col, col_key]].copy()
+    df.columns = ["Tarih", "Dolar_Kuru"]
     df["Tarih"] = pd.to_datetime(df["Tarih"], format="%d-%m-%Y", errors="coerce")
     df = df.dropna(subset=["Tarih"])
     df["Dolar_Kuru"] = pd.to_numeric(
@@ -270,6 +240,10 @@ def evds_cek(api_key: str, seri: str, baslangic: str, bitis: str):
     )
     df = df.dropna(subset=["Dolar_Kuru"])
     df = df.sort_values("Tarih").reset_index(drop=True)
+
+    if len(df) == 0:
+        return None, "Geçerli veri satırı bulunamadı."
+
     return df, None
 
 def veri_isle(df_raw):
