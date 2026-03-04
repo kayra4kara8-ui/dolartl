@@ -221,7 +221,7 @@ def evds_cek(api_key: str, seri: str, baslangic: str, bitis: str):
         }
         # Önce evds2, olmazsa evds3 dene
         for base in [
-            "https://evds2.tcmb.gov.tr/service/evds/",
+            "https://evds3.tcmb.gov.tr/service/evds/",
             "https://evds3.tcmb.gov.tr/service/evds/",
         ]:
             url = base + urlencode(params)
@@ -250,7 +250,7 @@ def evds_cek(api_key: str, seri: str, baslangic: str, bitis: str):
             "EVDS'den veri alınamadı.\n\n"
             "Olası nedenler:\n"
             "• API anahtarı yanlış veya süresi dolmuş\n"
-            "• evds2.tcmb.gov.tr hesabınızda seri yetkisi yok\n"
+            "• evds3.tcmb.gov.tr hesabınızda seri yetkisi yok\n"
             "• Seri kodu hatalı: " + seri
         )
 
@@ -372,7 +372,7 @@ with st.sidebar:
     api_key = st.text_input(
         "API Anahtarı", value="EDS05ZLAlI",
         type="password",
-        help="evds2.tcmb.gov.tr → Kullanıcı Paneli → API Anahtarı"
+        help="evds3.tcmb.gov.tr → Kullanıcı Paneli → API Anahtarı"
     )
     seri_sec = st.selectbox("Seri", list(SERILER.keys()), index=0)
     seri_kod = SERILER[seri_sec]
@@ -1163,3 +1163,4 @@ st.markdown("""
     USDTRY ANALYSIS PLATFORM · STREAMLIT + PLOTLY · EVDS API
 </div>
 """, unsafe_allow_html=True)
+
