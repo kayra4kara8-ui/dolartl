@@ -201,112 +201,53 @@ def apply_base(fig, **kwargs):
 # ─── TCMB EVDS API ───────────────────────────────────────────────────────────
 @st.cache_data(ttl=3600)
 def evds_veri_cek():
-    """
-    TCMB EVDS API'dan USD ve EUR döviz verilerini çeker.
-
-    ÖNEMLİ (Nisan 2024 değişikliği):
-    - API key artık URL'ye değil, HTTP header'a ekleniyor: headers={'key': api_key}
-    - Parametreler requests'in params= argümanına değil, urlencode ile URL path'e ekleniyor:
-      url = f'https://evds2.tcmb.gov.tr/service/evds/{urlencode(params)}'
-    - Seriler arasındaki ayraç virgül (,) DEĞİL tire (-) olmalı
-    """
-    from urllib.parse import urlencode
-
-    # Seriler arası ayraç TİRE (-) olmalı, virgül değil!
-    series_code = "TP.DK.USD.A.YTL-TP.DK.USD.S.YTL-TP.DK.EUR.A.YTL-TP.DK.EUR.S.YTL"
-
-    params = {
-        "series":   series_code,
-        "startDate": "01-01-1980",
-        "endDate":  pd.Timestamp.today().strftime("%d-%m-%Y"),
-        "type":     "json",
-        "frequency": "1",         # 1 = günlük
-    }
-
-    # Key sadece header'da!
-    headers = {"key": EVDS_API_KEY}
-
-    # URL path'e encode et (params= kullanma)
-    url = f"https://evds2.tcmb.gov.tr/service/evds/{urlencode(params)}"
-
+    """TCMB EVDS verisini evds paketi ile ceker. pip install evds"""
     try:
-        response = requests.get(url, headers=headers, timeout=30)
+        from evds import evdsAPI
+    except ImportError:
+        st.error("❌ `evds` paketi eksik. Terminalde calistirin: pip install evds")
+        return None
+    try:
+        client = evdsAPI(EVDS_API_KEY)
+        seriler = ["TP.DK.USD.A.YTL", "TP.DK.USD.S.YTL", "TP.DK.EUR.A.YTL", "TP.DK.EUR.S.YTL"]
+        bitis = pd.Timestamp.today().strftime("%d-%m-%Y")
+        df = client.get_data(seriler, startdate="01-01-1980", enddate=bitis)
 
-        # HTTP hata kodları
-        if response.status_code == 401:
-            st.error("🔑 API anahtarı geçersiz (401). https://evds2.tcmb.gov.tr → Profilim → API Anahtarı")
-            return None
-        if response.status_code == 403:
-            st.error("⛔ Erişim reddedildi (403). Seri erişim izninizi kontrol edin.")
-            return None
-        if response.status_code != 200:
-            st.error(f"HTTP {response.status_code} hatası. Yanıt: {response.text[:300]}")
-            return None
-
-        raw = response.text.strip()
-
-        # HTML geliyorsa oturum/key sorunu
-        if not raw or raw.startswith("<"):
-            st.error(f"""
-⚠️ API JSON yerine HTML döndürdü. Bu genellikle API anahtarı sorunudur.
-
-**Kontrol listesi:**
-1. `EVDS_API_KEY` değişkeninin doğru olduğunu teyit edin
-2. https://evds2.tcmb.gov.tr → **Profilim** → **API Anahtarı** butonuna tıklayarak anahtarı yenileyin
-3. Anahtarı `app.py` başındaki `EVDS_API_KEY = "..."` satırına yapıştırın
-
-*Not: Nisan 2024'ten itibaren TCMB, key'in URL'den değil header üzerinden gönderilmesini zorunlu kıldı.*
-""")
+        if df is None or len(df) == 0:
+            st.error("API bos veri donurdu. Anahtarinizi kontrol edin.")
             return None
 
-        try:
-            data = response.json()
-        except Exception as je:
-            st.error(f"JSON parse hatası: {je}\nYanıt başı: {raw[:300]}")
-            return None
+        # Tarih kolonunu bul ve normalize et
+        tarih_col = next((c for c in df.columns if "tarih" in c.lower() or "date" in c.lower()), None)
+        if tarih_col and tarih_col != "Tarih":
+            df = df.rename(columns={tarih_col: "Tarih"})
 
-        if "items" not in data:
-            st.error(f"'items' anahtarı yok. Dönen: {str(data)[:300]}")
-            return None
-
-        # ── DataFrame oluştur ────────────────────────────────────
-        df = pd.DataFrame(data["items"])
-
-        # UNIXTIME kolonunu düşür (varsa)
-        if "UNIXTIME" in df.columns:
-            df = df.drop(columns=["UNIXTIME"])
-
-        df = df[df["Tarih"].astype(str).str.strip() != ""]
         df["Tarih"] = pd.to_datetime(df["Tarih"], dayfirst=True, errors="coerce")
         df = df.dropna(subset=["Tarih"])
 
-        # Kolon isimlerini normalize et (nokta/tire → alt çizgi)
-        col_map = {}
-        for col in df.columns:
-            if col == "Tarih":
-                continue
-            clean = col.replace(".", "_").replace("-", "_")
-            col_map[col] = clean
+        if "UNIXTIME" in df.columns:
+            df = df.drop(columns=["UNIXTIME"])
+
+        # nokta -> alt cizgi
+        col_map = {c: c.replace(".", "_").replace("-", "_") for c in df.columns if c != "Tarih"}
         df = df.rename(columns=col_map)
 
-        # Sayısal dönüşüm
         for col in df.columns:
             if col != "Tarih":
                 df[col] = pd.to_numeric(df[col], errors="coerce")
 
-        df = df.sort_values("Tarih").reset_index(drop=True)
-        return df
+        return df.sort_values("Tarih").reset_index(drop=True)
 
-    except requests.exceptions.ConnectionError:
-        st.error("🌐 Bağlantı hatası. İnternet bağlantınızı kontrol edin.")
-        return None
-    except requests.exceptions.Timeout:
-        st.error("⏱️ İstek zaman aşımına uğradı (30s). Tekrar deneyin.")
-        return None
     except Exception as e:
-        st.error(f"❌ Beklenmeyen hata: {e}")
-        return None
+        st.error(f"""
+❌ Veri cekilemedi: `{e}`
 
+**Cozum:**
+1. https://evds3.tcmb.gov.tr → Profilim → API Anahtari Kopyala
+2. `app.py` basindaki `EVDS_API_KEY = "..."` satirini guncelleyin
+3. Terminal: `pip install evds`
+""")
+        return None
 
 @st.cache_data
 def veri_isle_api(df_raw, doviz="USD", tur="Alis"):
