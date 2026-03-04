@@ -208,56 +208,71 @@ def evds_cek(api_key: str, seri: str, baslangic: str, bitis: str):
     start = parse_dt(baslangic)
     end   = parse_dt(bitis)
 
+    from urllib.parse import urlencode
+
+    def fetch_chunk(s, e):
+        """Tek chunk çek, (items_list, hata) döndür."""
+        params = {
+            "series":    seri,
+            "startDate": fmt_dt(s),
+            "endDate":   fmt_dt(e),
+            "type":      "json",
+            "frequency": "1",
+        }
+        # Önce evds2, olmazsa evds3 dene
+        for base in [
+            "https://evds2.tcmb.gov.tr/service/evds/",
+            "https://evds3.tcmb.gov.tr/service/evds/",
+        ]:
+            url = base + urlencode(params)
+            try:
+                r = requests.get(url, headers={"key": api_key.strip()}, timeout=30)
+            except Exception as ex:
+                continue
+            if r.status_code not in (200, 201):
+                continue
+            raw = r.text.strip()
+            if not raw or raw.startswith("<"):
+                continue
+            try:
+                data = r.json()
+                items = data.get("items", [])
+                if items:
+                    return items, None
+            except Exception:
+                continue
+        return [], None
+
+    # Önce key geçerli mi diye küçük bir test yap
+    test_items, _ = fetch_chunk(end - timedelta(days=10), end)
+    if not test_items:
+        return None, (
+            "EVDS'den veri alınamadı.\n\n"
+            "Olası nedenler:\n"
+            "• API anahtarı yanlış veya süresi dolmuş\n"
+            "• evds2.tcmb.gov.tr hesabınızda seri yetkisi yok\n"
+            "• Seri kodu hatalı: " + seri
+        )
+
     all_records = []
     chunk_start = start
 
     while chunk_start < end:
         chunk_end = min(chunk_start + timedelta(days=1400), end)
-
-        url = (
-            "https://evds2.tcmb.gov.tr/service/evds/"
-            "series={}&startDate={}&endDate={}&type=json&frequency=1&key={}"
-        ).format(seri, fmt_dt(chunk_start), fmt_dt(chunk_end), api_key.strip())
-
-        try:
-            r = requests.get(url, timeout=30)
-        except Exception as e:
-            return None, f"Bağlantı hatası: {e}"
-
-        if r.status_code == 401:
-            return None, "API anahtarı geçersiz (401)."
-        if r.status_code != 200:
-            return None, f"EVDS HTTP {r.status_code} hatası."
-
-        raw = r.text.strip()
-        if not raw or raw.startswith("<"):
-            # Bu chunk'ı atla, devam et
-            chunk_start = chunk_end + timedelta(days=1)
-            continue
-
-        try:
-            data = r.json()
-        except Exception as e:
-            return None, f"JSON parse hatası: {e}. Yanıt: {raw[:200]}"
-
-        items = data.get("items", [])
-        if not items:
-            chunk_start = chunk_end + timedelta(days=1)
-            continue
+        items, _ = fetch_chunk(chunk_start, chunk_end)
 
         col_key = seri.replace(".", "_")
-        sample  = items[0]
-        if col_key not in sample:
-            available = [k for k in sample.keys() if k not in ("Tarih", "UNIXTIME")]
-            if not available:
-                return None, f"Kur sütunu bulunamadı. Alanlar: {list(sample.keys())}"
-            col_key = available[0]
+        if items:
+            sample = items[0]
+            if col_key not in sample:
+                available = [k for k in sample.keys() if k not in ("Tarih", "UNIXTIME")]
+                col_key = available[0] if available else col_key
 
-        for it in items:
-            tarih = it.get("Tarih", "")
-            deger = it.get(col_key, None)
-            if tarih and deger and str(deger).strip() not in ("", "None", "ND"):
-                all_records.append({"Tarih": tarih, "Dolar_Kuru": deger})
+            for it in items:
+                tarih = it.get("Tarih", "")
+                deger = it.get(col_key, None)
+                if tarih and deger and str(deger).strip() not in ("", "None", "ND"):
+                    all_records.append({"Tarih": tarih, "Dolar_Kuru": deger})
 
         chunk_start = chunk_end + timedelta(days=1)
 
