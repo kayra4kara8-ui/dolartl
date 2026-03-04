@@ -202,54 +202,117 @@ def apply_base(fig, **kwargs):
 @st.cache_data(ttl=3600)
 def evds_veri_cek():
     """TCMB EVDS API'dan USD ve EUR döviz verilerini çeker."""
-    base_url = "https://evds2.tcmb.gov.tr/service/evds/series"
+    # TCMB iki farklı URL formatını destekleyebilir, ikisini de deneriz
+    urls = [
+        "https://evds2.tcmb.gov.tr/service/evds/series",
+        "https://evds2.tcmb.gov.tr/service/evds/series=TP.DK.USD.A,TP.DK.USD.S,TP.DK.EUR.A,TP.DK.EUR.S",
+    ]
     series = "TP.DK.USD.A,TP.DK.USD.S,TP.DK.EUR.A,TP.DK.EUR.S"
     params = {
         "series": series,
         "startDate": "01-01-1980",
         "endDate": pd.Timestamp.today().strftime("%d-%m-%Y"),
-        "type": "json"
+        "type": "json",
+        "aggregationTypes": "avg",
+        "formulas": "0",
+        "frequency": "1",
     }
-    headers = {"key": EVDS_API_KEY}
+    headers = {
+        "key": EVDS_API_KEY,
+        "Content-Type": "application/json",
+    }
 
-    try:
-        response = requests.get(base_url, params=params, headers=headers, timeout=30)
-        response.raise_for_status()
-        data = response.json()
-        
-        if "items" not in data:
-            st.error(f"API yanıtı beklenmedik formatta. Yanıt: {str(data)[:300]}")
-            return None
+    last_error = None
+    for base_url in urls:
+        try:
+            response = requests.get(
+                base_url,
+                params=params if "=" not in base_url else {"startDate": params["startDate"], "endDate": params["endDate"], "type": "json"},
+                headers=headers,
+                timeout=30,
+            )
 
-        df = pd.DataFrame(data["items"])
-        df = df[df["Tarih"] != ""]
-        df["Tarih"] = pd.to_datetime(df["Tarih"], dayfirst=True, errors="coerce")
-        df = df.dropna(subset=["Tarih"])
-
-        col_map = {}
-        for col in df.columns:
-            if col == "Tarih":
+            # Debug: HTTP durum kodu kontrol
+            if response.status_code == 401:
+                st.error("🔑 API anahtarı geçersiz veya yetkisiz erişim (401). Lütfen API anahtarınızı kontrol edin.")
+                return None
+            if response.status_code == 403:
+                st.error("⛔ Erişim reddedildi (403). TCMB EVDS hesabınızdan seri erişim iznini kontrol edin.")
+                return None
+            if response.status_code != 200:
+                last_error = f"HTTP {response.status_code}: {response.text[:200]}"
                 continue
-            clean = col.replace(".", "_").replace("-", "_")
-            col_map[col] = clean
-        df = df.rename(columns=col_map)
 
-        for col in df.columns:
-            if col != "Tarih":
-                df[col] = pd.to_numeric(df[col], errors="coerce")
+            # Boş yanıt kontrolü
+            raw = response.text.strip()
+            if not raw:
+                last_error = "API boş yanıt döndürdü."
+                continue
 
-        df = df.sort_values("Tarih").reset_index(drop=True)
-        return df
+            # HTML yanıt kontrolü (bazen login sayfası döner)
+            if raw.startswith("<"):
+                last_error = "API JSON yerine HTML döndürdü — muhtemelen oturum/key sorunu."
+                continue
 
-    except requests.exceptions.ConnectionError:
-        st.error("🌐 TCMB API'ya bağlanılamadı. İnternet bağlantınızı kontrol edin.")
-        return None
-    except requests.exceptions.Timeout:
-        st.error("⏱️ API isteği zaman aşımına uğradı. Lütfen tekrar deneyin.")
-        return None
-    except Exception as e:
-        st.error(f"❌ Veri çekme hatası: {e}")
-        return None
+            try:
+                data = response.json()
+            except Exception as je:
+                last_error = f"JSON parse hatası: {je} | Yanıt başı: {raw[:200]}"
+                continue
+
+            if "items" not in data:
+                last_error = f"'items' anahtarı bulunamadı. Dönen anahtarlar: {list(data.keys())}"
+                continue
+
+            # ── Veriyi işle ──────────────────────────────────────
+            df = pd.DataFrame(data["items"])
+            df = df[df["Tarih"].astype(str).str.strip() != ""]
+            df["Tarih"] = pd.to_datetime(df["Tarih"], dayfirst=True, errors="coerce")
+            df = df.dropna(subset=["Tarih"])
+
+            # Kolon isimlerini normalize et (nokta → alt çizgi)
+            col_map = {}
+            for col in df.columns:
+                if col == "Tarih":
+                    continue
+                clean = col.replace(".", "_").replace("-", "_")
+                col_map[col] = clean
+            df = df.rename(columns=col_map)
+
+            for col in df.columns:
+                if col != "Tarih":
+                    df[col] = pd.to_numeric(df[col], errors="coerce")
+
+            df = df.sort_values("Tarih").reset_index(drop=True)
+            return df  # ✅ başarılı
+
+        except requests.exceptions.ConnectionError as ce:
+            last_error = f"Bağlantı hatası: {ce}"
+            continue
+        except requests.exceptions.Timeout:
+            last_error = "İstek zaman aşımına uğradı (30s)."
+            continue
+        except Exception as e:
+            last_error = f"Beklenmeyen hata: {e}"
+            continue
+
+    # Tüm denemeler başarısız
+    st.error(f"""
+❌ TCMB EVDS API'dan veri çekilemedi.
+
+**Hata:** `{last_error}`
+
+**Olası nedenler:**
+- İnternet bağlantısı yok
+- API anahtarı (`{EVDS_API_KEY}`) geçersiz veya süresi dolmuş
+- TCMB EVDS sisteminde geçici kesinti
+
+**Çözüm için:**
+1. https://evds2.tcmb.gov.tr adresine giriş yapın
+2. Hesabım → API Anahtarı bölümünden anahtarı yenileyin
+3. Kodun başındaki `EVDS_API_KEY` değişkenini güncelleyin
+""")
+    return None
 
 
 @st.cache_data
