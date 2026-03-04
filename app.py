@@ -200,8 +200,10 @@ def apply_base(fig, **kwargs):
 
 # ─── TCMB EVDS API ───────────────────────────────────────────────────────────
 @st.cache_data(ttl=3600)
-def evds_veri_cek():
+def evds_veri_cek(baslangic="01-01-2000", bitis=None):
     """TCMB EVDS verisini evds paketi ile ceker. pip install evds"""
+    if bitis is None:
+        bitis = pd.Timestamp.today().strftime("%d-%m-%Y")
     try:
         from evds import evdsAPI
     except ImportError:
@@ -210,8 +212,7 @@ def evds_veri_cek():
     try:
         client = evdsAPI(EVDS_API_KEY)
         seriler = ["TP.DK.USD.A.YTL", "TP.DK.USD.S.YTL", "TP.DK.EUR.A.YTL", "TP.DK.EUR.S.YTL"]
-        bitis = pd.Timestamp.today().strftime("%d-%m-%Y")
-        df = client.get_data(seriler, startdate="01-01-1980", enddate=bitis)
+        df = client.get_data(seriler, startdate=baslangic, enddate=bitis)
 
         if df is None or len(df) == 0:
             st.error("API bos veri donurdu. Anahtarinizi kontrol edin.")
@@ -371,6 +372,19 @@ with st.sidebar:
     tur_sec   = st.selectbox("Fiyat Türü", ["Alis", "Satis"],
                               format_func=lambda x: "Alış" if x == "Alis" else "Satış", index=0)
 
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("""<div style="font-family:'DM Mono',monospace;font-size:0.65rem;color:#4a6080;
+        text-transform:uppercase;letter-spacing:0.1em;margin-bottom:8px;">Tarih Aralığı</div>""",
+        unsafe_allow_html=True)
+    col_y1, col_y2 = st.columns(2)
+    with col_y1:
+        baslangic_yil = st.number_input("Başlangıç", min_value=2000, max_value=2025, value=2000, step=1)
+    with col_y2:
+        bitis_yil = st.number_input("Bitiş", min_value=2001, max_value=2026, value=2026, step=1)
+
+    baslangic_tarih = f"01-01-{baslangic_yil}"
+    bitis_tarih     = f"31-12-{bitis_yil}" if bitis_yil < 2026 else pd.Timestamp.today().strftime("%d-%m-%Y")
+
     if st.button("🔄 Veriyi Yenile", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
@@ -413,7 +427,7 @@ with st.sidebar:
 
 # ─── VERİ ÇEKME ──────────────────────────────────────────────────────────────
 with st.spinner("🌐 TCMB EVDS'den veri çekiliyor..."):
-    df_raw = evds_veri_cek()
+    df_raw = evds_veri_cek(baslangic=baslangic_tarih, bitis=bitis_tarih)
 
 if df_raw is None:
     st.error("Veri çekilemedi. Lütfen API bağlantınızı kontrol edin ve sayfayı yenileyin.")
