@@ -213,6 +213,7 @@ def evds_cek(api_key: str, seri: str, baslangic: str, bitis: str):
     end   = parse_dt(bitis)
 
     # evds paketi ile çek — evds3=True olmadan, tıpkı çalışan örnekteki gibi
+    evds_hata = None
     if evdsAPI is not None:
         try:
             client = evdsAPI(api_key.strip())
@@ -240,7 +241,9 @@ def evds_cek(api_key: str, seri: str, baslangic: str, bitis: str):
                     if len(df) > 0:
                         return df, None
         except Exception as ex:
-            pass  # evds paketi çalışmadı, requests fallback dene
+            evds_hata = str(ex)
+    else:
+        evds_hata = "evds paketi yüklü değil"
 
     # requests fallback — chunk'lar halinde çek
     from urllib.parse import urlencode
@@ -276,15 +279,14 @@ def evds_cek(api_key: str, seri: str, baslangic: str, bitis: str):
                 continue
         return []
 
-    # Test isteği
+    # Test isteği — son 10 günü çek
     test = fetch_chunk(end - timedelta(days=10), end)
     if not test:
         return None, (
-            "EVDS'den veri alınamadı.\n\n"
-            "Olası nedenler:\n"
-            "• API anahtarı yanlış veya süresi dolmuş\n"
-            "• evds2.tcmb.gov.tr hesabınızda seri yetkisi yok\n"
-            "• Seri kodu hatalı: " + seri
+            f"EVDS'den veri alınamadı.\n\n"
+            f"evds paketi hatası: {evds_hata}\n\n"
+            f"requests ile de başarısız.\n"
+            f"Seri: {seri} | Tarih: {fmt_dt(end - timedelta(days=10))} → {fmt_dt(end)}"
         )
 
     all_records = []
