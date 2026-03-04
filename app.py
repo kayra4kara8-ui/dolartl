@@ -201,135 +201,127 @@ def apply_base(fig, **kwargs):
 # ─── TCMB EVDS API ───────────────────────────────────────────────────────────
 @st.cache_data(ttl=3600)
 def evds_veri_cek():
-    """TCMB EVDS API'dan USD ve EUR döviz verilerini çeker."""
-    # TCMB iki farklı URL formatını destekleyebilir, ikisini de deneriz
-    urls = [
-        "https://evds2.tcmb.gov.tr/service/evds/series",
-        "https://evds2.tcmb.gov.tr/service/evds/series=TP.DK.USD.A,TP.DK.USD.S,TP.DK.EUR.A,TP.DK.EUR.S",
-    ]
-    series = "TP.DK.USD.A,TP.DK.USD.S,TP.DK.EUR.A,TP.DK.EUR.S"
+    """
+    TCMB EVDS API'dan USD ve EUR döviz verilerini çeker.
+
+    ÖNEMLİ (Nisan 2024 değişikliği):
+    - API key artık URL'ye değil, HTTP header'a ekleniyor: headers={'key': api_key}
+    - Parametreler requests'in params= argümanına değil, urlencode ile URL path'e ekleniyor:
+      url = f'https://evds2.tcmb.gov.tr/service/evds/{urlencode(params)}'
+    - Seriler arasındaki ayraç virgül (,) DEĞİL tire (-) olmalı
+    """
+    from urllib.parse import urlencode
+
+    # Seriler arası ayraç TİRE (-) olmalı, virgül değil!
+    series_code = "TP.DK.USD.A-TP.DK.USD.S-TP.DK.EUR.A-TP.DK.EUR.S"
+
     params = {
-        "series": series,
+        "series":   series_code,
         "startDate": "01-01-1980",
-        "endDate": pd.Timestamp.today().strftime("%d-%m-%Y"),
-        "type": "json",
-        "aggregationTypes": "avg",
-        "formulas": "0",
-        "frequency": "1",
-    }
-    headers = {
-        "key": EVDS_API_KEY,
-        "Content-Type": "application/json",
+        "endDate":  pd.Timestamp.today().strftime("%d-%m-%Y"),
+        "type":     "json",
+        "frequency": "1",         # 1 = günlük
     }
 
-    last_error = None
-    for base_url in urls:
-        try:
-            response = requests.get(
-                base_url,
-                params=params if "=" not in base_url else {"startDate": params["startDate"], "endDate": params["endDate"], "type": "json"},
-                headers=headers,
-                timeout=30,
-            )
+    # Key sadece header'da!
+    headers = {"key": EVDS_API_KEY}
 
-            # Debug: HTTP durum kodu kontrol
-            if response.status_code == 401:
-                st.error("🔑 API anahtarı geçersiz veya yetkisiz erişim (401). Lütfen API anahtarınızı kontrol edin.")
-                return None
-            if response.status_code == 403:
-                st.error("⛔ Erişim reddedildi (403). TCMB EVDS hesabınızdan seri erişim iznini kontrol edin.")
-                return None
-            if response.status_code != 200:
-                last_error = f"HTTP {response.status_code}: {response.text[:200]}"
-                continue
+    # URL path'e encode et (params= kullanma)
+    url = f"https://evds2.tcmb.gov.tr/service/evds/{urlencode(params)}"
 
-            # Boş yanıt kontrolü
-            raw = response.text.strip()
-            if not raw:
-                last_error = "API boş yanıt döndürdü."
-                continue
+    try:
+        response = requests.get(url, headers=headers, timeout=30)
 
-            # HTML yanıt kontrolü (bazen login sayfası döner)
-            if raw.startswith("<"):
-                last_error = "API JSON yerine HTML döndürdü — muhtemelen oturum/key sorunu."
-                continue
+        # HTTP hata kodları
+        if response.status_code == 401:
+            st.error("🔑 API anahtarı geçersiz (401). https://evds2.tcmb.gov.tr → Profilim → API Anahtarı")
+            return None
+        if response.status_code == 403:
+            st.error("⛔ Erişim reddedildi (403). Seri erişim izninizi kontrol edin.")
+            return None
+        if response.status_code != 200:
+            st.error(f"HTTP {response.status_code} hatası. Yanıt: {response.text[:300]}")
+            return None
 
-            try:
-                data = response.json()
-            except Exception as je:
-                last_error = f"JSON parse hatası: {je} | Yanıt başı: {raw[:200]}"
-                continue
+        raw = response.text.strip()
 
-            if "items" not in data:
-                last_error = f"'items' anahtarı bulunamadı. Dönen anahtarlar: {list(data.keys())}"
-                continue
+        # HTML geliyorsa oturum/key sorunu
+        if not raw or raw.startswith("<"):
+            st.error(f"""
+⚠️ API JSON yerine HTML döndürdü. Bu genellikle API anahtarı sorunudur.
 
-            # ── Veriyi işle ──────────────────────────────────────
-            df = pd.DataFrame(data["items"])
-            df = df[df["Tarih"].astype(str).str.strip() != ""]
-            df["Tarih"] = pd.to_datetime(df["Tarih"], dayfirst=True, errors="coerce")
-            df = df.dropna(subset=["Tarih"])
+**Kontrol listesi:**
+1. `EVDS_API_KEY` değişkeninin doğru olduğunu teyit edin
+2. https://evds2.tcmb.gov.tr → **Profilim** → **API Anahtarı** butonuna tıklayarak anahtarı yenileyin
+3. Anahtarı `app.py` başındaki `EVDS_API_KEY = "..."` satırına yapıştırın
 
-            # Kolon isimlerini normalize et (nokta → alt çizgi)
-            col_map = {}
-            for col in df.columns:
-                if col == "Tarih":
-                    continue
-                clean = col.replace(".", "_").replace("-", "_")
-                col_map[col] = clean
-            df = df.rename(columns=col_map)
-
-            for col in df.columns:
-                if col != "Tarih":
-                    df[col] = pd.to_numeric(df[col], errors="coerce")
-
-            df = df.sort_values("Tarih").reset_index(drop=True)
-            return df  # ✅ başarılı
-
-        except requests.exceptions.ConnectionError as ce:
-            last_error = f"Bağlantı hatası: {ce}"
-            continue
-        except requests.exceptions.Timeout:
-            last_error = "İstek zaman aşımına uğradı (30s)."
-            continue
-        except Exception as e:
-            last_error = f"Beklenmeyen hata: {e}"
-            continue
-
-    # Tüm denemeler başarısız
-    st.error(f"""
-❌ TCMB EVDS API'dan veri çekilemedi.
-
-**Hata:** `{last_error}`
-
-**Olası nedenler:**
-- İnternet bağlantısı yok
-- API anahtarı (`{EVDS_API_KEY}`) geçersiz veya süresi dolmuş
-- TCMB EVDS sisteminde geçici kesinti
-
-**Çözüm için:**
-1. https://evds2.tcmb.gov.tr adresine giriş yapın
-2. Hesabım → API Anahtarı bölümünden anahtarı yenileyin
-3. Kodun başındaki `EVDS_API_KEY` değişkenini güncelleyin
+*Not: Nisan 2024'ten itibaren TCMB, key'in URL'den değil header üzerinden gönderilmesini zorunlu kıldı.*
 """)
-    return None
+            return None
+
+        try:
+            data = response.json()
+        except Exception as je:
+            st.error(f"JSON parse hatası: {je}\nYanıt başı: {raw[:300]}")
+            return None
+
+        if "items" not in data:
+            st.error(f"'items' anahtarı yok. Dönen: {str(data)[:300]}")
+            return None
+
+        # ── DataFrame oluştur ────────────────────────────────────
+        df = pd.DataFrame(data["items"])
+
+        # UNIXTIME kolonunu düşür (varsa)
+        if "UNIXTIME" in df.columns:
+            df = df.drop(columns=["UNIXTIME"])
+
+        df = df[df["Tarih"].astype(str).str.strip() != ""]
+        df["Tarih"] = pd.to_datetime(df["Tarih"], dayfirst=True, errors="coerce")
+        df = df.dropna(subset=["Tarih"])
+
+        # Kolon isimlerini normalize et (nokta/tire → alt çizgi)
+        col_map = {}
+        for col in df.columns:
+            if col == "Tarih":
+                continue
+            clean = col.replace(".", "_").replace("-", "_")
+            col_map[col] = clean
+        df = df.rename(columns=col_map)
+
+        # Sayısal dönüşüm
+        for col in df.columns:
+            if col != "Tarih":
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+
+        df = df.sort_values("Tarih").reset_index(drop=True)
+        return df
+
+    except requests.exceptions.ConnectionError:
+        st.error("🌐 Bağlantı hatası. İnternet bağlantınızı kontrol edin.")
+        return None
+    except requests.exceptions.Timeout:
+        st.error("⏱️ İstek zaman aşımına uğradı (30s). Tekrar deneyin.")
+        return None
+    except Exception as e:
+        st.error(f"❌ Beklenmeyen hata: {e}")
+        return None
 
 
 @st.cache_data
 def veri_isle_api(df_raw, doviz="USD", tur="Alis"):
     """Ham API verisini analiz için hazırlar."""
-    col_map = {
-        "USD_Alis":  "TP_DK_USD_A",
-        "USD_Satis": "TP_DK_USD_S",
-        "EUR_Alis":  "TP_DK_EUR_A",
-        "EUR_Satis": "TP_DK_EUR_S",
-    }
-    key = f"{doviz}_{tur}"
-    col_name = col_map.get(key, "TP_DK_USD_A")
+    # Kolon adı varyantlarını dinamik bul
+    suffix = "A" if tur == "Alis" else "S"
+    candidates = [
+        f"TP_DK_{doviz}_{suffix}",
+        f"TP_DK_{doviz}_{suffix}_YTL",
+    ]
+    col_name = next((c for c in candidates if c in df_raw.columns), None)
 
-    if col_name not in df_raw.columns:
+    if col_name is None:
         available = [c for c in df_raw.columns if c != "Tarih"]
-        st.error(f"Kolon bulunamadı: {col_name}. Mevcut kolonlar: {available}")
+        st.error(f"Kolon bulunamadı. Aranan: {candidates}\nMevcut kolonlar: {available}")
         return None
 
     df = df_raw[["Tarih", col_name]].copy()
@@ -373,14 +365,21 @@ def veri_isle_api(df_raw, doviz="USD", tur="Alis"):
 
 
 def spread_hesapla(df_raw, doviz="USD"):
-    """Alış-Satış spread analizi."""
-    a_col = f"TP_DK_{doviz}_A"
-    s_col = f"TP_DK_{doviz}_S"
-    if a_col not in df_raw.columns or s_col not in df_raw.columns:
+    """Alış-Satış spread analizi. Kolon adlarını dinamik olarak bulur."""
+    # Olası kolon adı varyantları
+    a_candidates = [f"TP_DK_{doviz}_A", f"TP_DK_{doviz}_A_YTL"]
+    s_candidates = [f"TP_DK_{doviz}_S", f"TP_DK_{doviz}_S_YTL"]
+
+    a_col = next((c for c in a_candidates if c in df_raw.columns), None)
+    s_col = next((c for c in s_candidates if c in df_raw.columns), None)
+
+    if not a_col or not s_col:
         return None
+
     sp = df_raw[["Tarih", a_col, s_col]].dropna().copy()
-    sp["Spread_TL"]  = sp[s_col] - sp[a_col]
-    sp["Spread_Pct"] = (sp["Spread_TL"] / sp[a_col]) * 100
+    sp = sp.rename(columns={a_col: f"TP_DK_{doviz}_A", s_col: f"TP_DK_{doviz}_S"})
+    sp["Spread_TL"]  = sp[f"TP_DK_{doviz}_S"] - sp[f"TP_DK_{doviz}_A"]
+    sp["Spread_Pct"] = (sp["Spread_TL"] / sp[f"TP_DK_{doviz}_A"]) * 100
     return sp
 
 
