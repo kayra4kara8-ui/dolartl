@@ -5,6 +5,8 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime, date
 import requests
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 try:
     from evds import evdsAPI
 except ImportError:
@@ -114,10 +116,10 @@ LEGEND_RIGHT = dict(
 
 # Seri seçenekleri
 SERILER = {
-    "USD Satış (TP.DK.USD.S.YTL)": "TP.DK.USD.S.YTL",
     "USD Alış (TP.DK.USD.A.YTL)":  "TP.DK.USD.A.YTL",
-    "EUR Satış (TP.DK.EUR.S.YTL)": "TP.DK.EUR.S.YTL",
+    "USD Satış (TP.DK.USD.S.YTL)": "TP.DK.USD.S.YTL",
     "EUR Alış (TP.DK.EUR.A.YTL)":  "TP.DK.EUR.A.YTL",
+    "EUR Satış (TP.DK.EUR.S.YTL)": "TP.DK.EUR.S.YTL",
 }
 
 def tr_fmt_kur(val, decimals=4):
@@ -212,17 +214,17 @@ def evds_cek(api_key: str, seri: str, baslangic: str, bitis: str):
     start = parse_dt(baslangic)
     end   = parse_dt(bitis)
 
-    # evds paketi varsa kullan (EVDS3 uyumlu), yoksa requests fallback
+    # evds paketi ile çek — evds3=True olmadan, tıpkı çalışan örnekteki gibi
+    evds_hata = None
     if evdsAPI is not None:
         try:
-            client = evdsAPI(api_key.strip(), evds3=True)
-            raw_df = client.get_data(
-                [seri],
-                startdate=fmt_dt(start),
-                enddate=fmt_dt(end),
-                frequency=1
-            )
+            client = evdsAPI(api_key.strip(), legacySSL=True)
+            raw_df = client.get_data([seri], startdate=fmt_dt(start), enddate=fmt_dt(end))
             if raw_df is not None and len(raw_df) > 0:
+                # İlk satır boş olabilir, sil
+                raw_df = raw_df[1:].reset_index(drop=True)
+                raw_df = raw_df.fillna(method="ffill")
+                # Sütunları bul
                 tarih_col = next((c for c in raw_df.columns if c.lower() == "tarih"), None)
                 col_key   = seri.replace(".", "_")
                 if col_key not in raw_df.columns:
@@ -240,8 +242,10 @@ def evds_cek(api_key: str, seri: str, baslangic: str, bitis: str):
                     df = df.sort_values("Tarih").reset_index(drop=True)
                     if len(df) > 0:
                         return df, None
-        except Exception:
-            pass  # evds paketi çalışmadı, requests ile dene
+        except Exception as ex:
+            evds_hata = str(ex)
+    else:
+        evds_hata = "evds paketi yüklü değil"
 
     # requests fallback — chunk'lar halinde çek
     from urllib.parse import urlencode
@@ -260,7 +264,7 @@ def evds_cek(api_key: str, seri: str, baslangic: str, bitis: str):
         ]:
             url = base + urlencode(params)
             try:
-                r = requests.get(url, headers={"key": api_key.strip()}, timeout=30)
+                r = requests.get(url, headers={"key": api_key.strip()}, timeout=30, verify=False)
             except Exception:
                 continue
             if r.status_code not in (200, 201):
@@ -277,15 +281,14 @@ def evds_cek(api_key: str, seri: str, baslangic: str, bitis: str):
                 continue
         return []
 
-    # Test isteği
+    # Test isteği — son 10 günü çek
     test = fetch_chunk(end - timedelta(days=10), end)
     if not test:
         return None, (
-            "EVDS'den veri alınamadı.\n\n"
-            "Olası nedenler:\n"
-            "• API anahtarı yanlış veya süresi dolmuş\n"
-            "• evds2.tcmb.gov.tr hesabınızda seri yetkisi yok\n"
-            "• Seri kodu hatalı: " + seri
+            f"EVDS'den veri alınamadı.\n\n"
+            f"evds paketi hatası: {evds_hata}\n\n"
+            f"requests ile de başarısız.\n"
+            f"Seri: {seri} | Tarih: {fmt_dt(end - timedelta(days=10))} → {fmt_dt(end)}"
         )
 
     all_records = []
