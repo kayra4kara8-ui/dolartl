@@ -204,7 +204,7 @@ def evds_cek(api_key: str, seri: str, baslangic: str, bitis: str):
     try:
         client = evdsAPI(api_key.strip())
         # startdate / enddate formatı DD-MM-YYYY
-        raw = client.get_data([seri], startdate=baslangic, enddate=bitis)
+        raw = client.get_data([seri], startdate=baslangic, enddate=bitis, frequency=1)
     except Exception as e:
         err = str(e)
         if "401" in err or "Unauthorized" in err.lower():
