@@ -242,9 +242,7 @@ def evds_ham_veri_cek():
         return df.sort_values("Tarih").reset_index(drop=True)
 
     except Exception as e:
-        st.error(f"❌ Veri çekilemedi: `{e}`
-
-https://evds3.tcmb.gov.tr → Profilim → API Anahtarı")
+        st.error(f"❌ Veri çekilemedi: {e} — https://evds3.tcmb.gov.tr → Profilim → API Anahtarı")
         return None
 
 
