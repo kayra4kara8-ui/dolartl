@@ -201,9 +201,9 @@ def apply_base(fig, **kwargs):
 # ─── EVDS API ─────────────────────────────────────────────────────────────────
 @st.cache_data(ttl=0, show_spinner=False)
 def evds_cek(api_key: str, seri: str, baslangic: str, bitis: str):
-    """EVDS'den veri çek — requests ile direkt API."""
-    # EVDS max ~1460 gün tek seferinde döndürüyor, parça parça çekmek lazım
+    """EVDS'den veri çek — requests ile chunk'lar halinde, SSL kapalı."""
     from datetime import datetime, timedelta
+    from urllib.parse import urlencode
 
     def parse_dt(s):
         return datetime.strptime(s, "%d-%m-%Y")
@@ -211,46 +211,8 @@ def evds_cek(api_key: str, seri: str, baslangic: str, bitis: str):
     def fmt_dt(d):
         return d.strftime("%d-%m-%Y")
 
-    start = parse_dt(baslangic)
-    end   = parse_dt(bitis)
-
-    # evds paketi ile çek — evds3=True olmadan, tıpkı çalışan örnekteki gibi
-    evds_hata = None
-    if evdsAPI is not None:
-        try:
-            client = evdsAPI(api_key.strip(), legacySSL=True)
-            raw_df = client.get_data([seri], startdate=fmt_dt(start), enddate=fmt_dt(end))
-            if raw_df is not None and len(raw_df) > 0:
-                # İlk satır boş olabilir, sil
-                raw_df = raw_df[1:].reset_index(drop=True)
-                raw_df = raw_df.fillna(method="ffill")
-                # Sütunları bul
-                tarih_col = next((c for c in raw_df.columns if c.lower() == "tarih"), None)
-                col_key   = seri.replace(".", "_")
-                if col_key not in raw_df.columns:
-                    available = [c for c in raw_df.columns if c not in (tarih_col, "UNIXTIME")]
-                    col_key   = available[0] if available else None
-                if tarih_col and col_key:
-                    df = raw_df[[tarih_col, col_key]].copy()
-                    df.columns = ["Tarih", "Dolar_Kuru"]
-                    df["Tarih"] = pd.to_datetime(df["Tarih"], format="%d-%m-%Y", errors="coerce")
-                    df = df.dropna(subset=["Tarih"])
-                    df["Dolar_Kuru"] = pd.to_numeric(
-                        df["Dolar_Kuru"].astype(str).str.replace(",", "."), errors="coerce"
-                    )
-                    df = df.dropna(subset=["Dolar_Kuru"])
-                    df = df.sort_values("Tarih").reset_index(drop=True)
-                    if len(df) > 0:
-                        return df, None
-        except Exception as ex:
-            evds_hata = str(ex)
-    else:
-        evds_hata = "evds paketi yüklü değil"
-
-    # requests fallback — chunk'lar halinde çek
-    from urllib.parse import urlencode
-
     def fetch_chunk(s, e):
+        """Bir tarih aralığını çek. JSON items listesi döndür."""
         params = {
             "series":    seri,
             "startDate": fmt_dt(s),
@@ -258,16 +220,22 @@ def evds_cek(api_key: str, seri: str, baslangic: str, bitis: str):
             "type":      "json",
             "frequency": "1",
         }
+        qs = urlencode(params)
         for base in [
-            "https://evds3.tcmb.gov.tr/service/evds/",
             "https://evds2.tcmb.gov.tr/service/evds/",
+            "https://evds3.tcmb.gov.tr/service/evds/",
         ]:
-            url = base + urlencode(params)
+            url = base + qs
             try:
-                r = requests.get(url, headers={"key": api_key.strip()}, timeout=30, verify=False)
+                r = requests.get(
+                    url,
+                    headers={"key": api_key.strip()},
+                    timeout=30,
+                    verify=False
+                )
             except Exception:
                 continue
-            if r.status_code not in (200, 201):
+            if r.status_code != 200:
                 continue
             raw = r.text.strip()
             if not raw or raw.startswith("<"):
@@ -281,34 +249,64 @@ def evds_cek(api_key: str, seri: str, baslangic: str, bitis: str):
                 continue
         return []
 
-    # Test isteği — son 10 günü çek
-    test = fetch_chunk(end - timedelta(days=10), end)
+    start = parse_dt(baslangic)
+    end   = parse_dt(bitis)
+
+    # Önce küçük test — son 5 gün
+    test = fetch_chunk(end - timedelta(days=5), end)
     if not test:
+        # evds paketi ile dene
+        if evdsAPI is not None:
+            try:
+                client = evdsAPI(api_key.strip(), legacySSL=True)
+                raw_df = client.get_data([seri], startdate=baslangic, enddate=bitis)
+                if raw_df is not None and len(raw_df) > 1:
+                    raw_df = raw_df[1:].reset_index(drop=True)
+                    raw_df = raw_df.fillna(method="ffill")
+                    tarih_col = next((c for c in raw_df.columns if c.lower() == "tarih"), None)
+                    col_key   = seri.replace(".", "_")
+                    if col_key not in raw_df.columns:
+                        available = [c for c in raw_df.columns if c not in (tarih_col, "UNIXTIME")]
+                        col_key   = available[0] if available else None
+                    if tarih_col and col_key:
+                        df = raw_df[[tarih_col, col_key]].copy()
+                        df.columns = ["Tarih", "Dolar_Kuru"]
+                        df["Tarih"] = pd.to_datetime(df["Tarih"], format="%d-%m-%Y", errors="coerce")
+                        df = df.dropna(subset=["Tarih"])
+                        df["Dolar_Kuru"] = pd.to_numeric(
+                            df["Dolar_Kuru"].astype(str).str.replace(",", "."), errors="coerce"
+                        )
+                        df = df.dropna(subset=["Dolar_Kuru"])
+                        df = df.sort_values("Tarih").reset_index(drop=True)
+                        if len(df) > 0:
+                            return df, None
+            except Exception as ex:
+                return None, f"Her iki yöntem de başarısız.\nevds hatası: {ex}"
         return None, (
-            f"EVDS'den veri alınamadı.\n\n"
-            f"evds paketi hatası: {evds_hata}\n\n"
-            f"requests ile de başarısız.\n"
-            f"Seri: {seri} | Tarih: {fmt_dt(end - timedelta(days=10))} → {fmt_dt(end)}"
+            "API bağlantısı kurulamadı.\n"
+            "• API anahtarını kontrol edin\n"
+            "• Seri: " + seri
         )
 
+    # chunk'lar halinde tüm veriyi çek
+    col_key     = None
     all_records = []
-    chunk_start  = start
-    col_key      = None
+    chunk_start = start
 
     while chunk_start < end:
-        chunk_end = min(chunk_start + timedelta(days=1400), end)
-        items     = fetch_chunk(chunk_start, chunk_end)
+        chunk_end = min(chunk_start + timedelta(days=365), end)
+        items = fetch_chunk(chunk_start, chunk_end)
 
-        if items and col_key is None:
-            ck = seri.replace(".", "_")
-            sample = items[0]
-            if ck in sample:
-                col_key = ck
-            else:
-                available = [k for k in sample.keys() if k not in ("Tarih", "UNIXTIME")]
-                col_key   = available[0] if available else ck
+        if items:
+            if col_key is None:
+                ck = seri.replace(".", "_")
+                sample = items[0]
+                if ck in sample:
+                    col_key = ck
+                else:
+                    available = [k for k in sample.keys() if k not in ("Tarih", "UNIXTIME")]
+                    col_key = available[0] if available else ck
 
-        if items and col_key:
             for it in items:
                 tarih = it.get("Tarih", "")
                 deger = it.get(col_key, None)
@@ -318,7 +316,7 @@ def evds_cek(api_key: str, seri: str, baslangic: str, bitis: str):
         chunk_start = chunk_end + timedelta(days=1)
 
     if not all_records:
-        return None, "Hiç veri bulunamadı."
+        return None, "Veri bulunamadı."
 
     df = pd.DataFrame(all_records).drop_duplicates(subset=["Tarih"])
     df["Tarih"] = pd.to_datetime(df["Tarih"], format="%d-%m-%Y", errors="coerce")
@@ -329,7 +327,6 @@ def evds_cek(api_key: str, seri: str, baslangic: str, bitis: str):
     df = df.dropna(subset=["Dolar_Kuru"])
     df = df.sort_values("Tarih").reset_index(drop=True)
     return df, None
-
 def veri_isle(df_raw):
     df = df_raw.copy()
 
