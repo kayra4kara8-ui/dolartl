@@ -6,7 +6,9 @@ import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
 import requests
+import ssl
 import io
+from requests.adapters import HTTPAdapter
 
 st.set_page_config(
     page_title="USDTRY Analiz Platformu",
@@ -200,65 +202,73 @@ def apply_base(fig, **kwargs):
     return fig
 
 # ─── TCMB EVDS API ───────────────────────────────────────────────────────────
+# ── EVDS3 doğrudan HTTP (evds paketi 1000 satır limiti nedeniyle bypass edildi) ──
+class _LegacySSL(HTTPAdapter):
+    def init_poolmanager(self, *a, **kw):
+        ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+        ctx.options |= 0x4
+        kw["ssl_context"] = ctx
+        super().init_poolmanager(*a, **kw)
+
+def _evds_session():
+    s = requests.Session()
+    s.mount("https://", _LegacySSL())
+    s.headers.update({"key": EVDS_API_KEY})
+    return s
+
+def _evds_cek_blok(session, bas, bit):
+    """Tek bir tarih bloğunu çeker."""
+    SERILER = "TP.DK.USD.A.YTL-TP.DK.USD.S.YTL-TP.DK.EUR.A.YTL-TP.DK.EUR.S.YTL"
+    BASE    = "https://evds3.tcmb.gov.tr/igmevdsms-dis/"
+    params  = f"series={SERILER}&startDate={bas}&endDate={bit}&type=json&frequency=1&formulas=&aggregationTypes="
+    r = session.get(BASE + params, timeout=30)
+    if r.status_code != 200 or not r.text.strip():
+        return None
+    try:
+        data = r.json()
+        df = pd.DataFrame(data["items"])
+        if "UNIXTIME" in df.columns:
+            df.drop(columns=["UNIXTIME"], inplace=True)
+        df["Tarih"] = pd.to_datetime(df["Tarih"], dayfirst=True, errors="coerce")
+        return df.dropna(subset=["Tarih"])
+    except Exception:
+        return None
+
 @st.cache_data(show_spinner=False)
 def evds_ham_veri_cek():
     """
-    TCMB EVDS'den 2000-bugün arası TÜM veriyi yıllık parçalar halinde çekip birleştirir.
-    evds paketi tek seferde sınırlı veri döndürdüğünden yıl yıl çekilir.
+    2000'den bugüne tüm kur verisini 2'şer yıllık bloklar halinde çeker.
+    Her blok max ~731 satır — 1000 satır limitinin altında kalır.
+    Sonuç cache'lenir, sayfa yenilenene kadar tekrar çekilmez.
     """
-    try:
-        from evds import evdsAPI
-    except ImportError:
-        st.error("❌ `evds` paketi eksik. Terminalde: pip install evds")
+    session = _evds_session()
+    parcalar = []
+    bugun = pd.Timestamp.today()
+    yil = 2000
+
+    while yil <= bugun.year:
+        bas = f"01-01-{yil}"
+        bit = f"31-12-{yil + 1}" if yil + 1 <= bugun.year else bugun.strftime("%d-%m-%Y")
+        parca = _evds_cek_blok(session, bas, bit)
+        if parca is not None and len(parca) > 0:
+            parcalar.append(parca)
+        yil += 2
+
+    if not parcalar:
+        st.error("❌ Hiç veri çekilemedi. API anahtarını kontrol edin: https://evds3.tcmb.gov.tr")
         return None
-    try:
-        client = evdsAPI(EVDS_API_KEY)
-        seriler = ["TP.DK.USD.A.YTL", "TP.DK.USD.S.YTL", "TP.DK.EUR.A.YTL", "TP.DK.EUR.S.YTL"]
 
-        bugun = pd.Timestamp.today()
-        parcalar = []
+    df = pd.concat(parcalar, ignore_index=True)
+    df = df.drop_duplicates(subset=["Tarih"])
 
-        # 2000'den bugüne yıl yıl çek
-        for yil in range(2000, bugun.year + 1):
-            bas = f"01-01-{yil}"
-            bit = f"31-12-{yil}" if yil < bugun.year else bugun.strftime("%d-%m-%Y")
-            try:
-                parca = client.get_data(seriler, startdate=bas, enddate=bit)
-                if parca is not None and len(parca) > 0:
-                    parcalar.append(parca)
-            except Exception:
-                continue
+    col_map = {c: c.replace(".", "_").replace("-", "_") for c in df.columns if c != "Tarih"}
+    df = df.rename(columns=col_map)
 
-        if not parcalar:
-            st.error("Hiç veri çekilemedi. API anahtarını kontrol edin.")
-            return None
+    for col in df.columns:
+        if col != "Tarih":
+            df[col] = pd.to_numeric(df[col], errors="coerce")
 
-        df = pd.concat(parcalar, ignore_index=True)
-
-        # Tarih kolonunu normalize et
-        tarih_col = next((c for c in df.columns if "tarih" in c.lower() or "date" in c.lower()), None)
-        if tarih_col and tarih_col != "Tarih":
-            df = df.rename(columns={tarih_col: "Tarih"})
-
-        df["Tarih"] = pd.to_datetime(df["Tarih"], dayfirst=True, errors="coerce")
-        df = df.dropna(subset=["Tarih"])
-        df = df.drop_duplicates(subset=["Tarih"])
-
-        if "UNIXTIME" in df.columns:
-            df = df.drop(columns=["UNIXTIME"])
-
-        col_map = {c: c.replace(".", "_").replace("-", "_") for c in df.columns if c != "Tarih"}
-        df = df.rename(columns=col_map)
-
-        for col in df.columns:
-            if col != "Tarih":
-                df[col] = pd.to_numeric(df[col], errors="coerce")
-
-        return df.sort_values("Tarih").reset_index(drop=True)
-
-    except Exception as e:
-        st.error(f"❌ Veri çekilemedi: {e} — https://evds3.tcmb.gov.tr → Profilim → API Anahtarı")
-        return None
+    return df.sort_values("Tarih").reset_index(drop=True)
 
 
 def evds_veri_cek(baslangic="01-01-2000", bitis=None):
