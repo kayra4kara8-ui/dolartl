@@ -336,9 +336,9 @@ with st.sidebar:
 
     col_d1, col_d2 = st.columns(2)
     with col_d1:
-        bas_tarih = st.date_input("Başlangıç", value=date(2003, 1, 1), min_value=date(1990, 1, 1))
+        bas_tarih = st.date_input("Başlangıç", value=date(2003, 1, 1), min_value=date(1990, 1, 1), max_value=date.today())
     with col_d2:
-        bit_tarih = st.date_input("Bitiş", value=date.today())
+        bit_tarih = st.date_input("Bitiş", value=date.today(), min_value=date(1990, 1, 1), max_value=date.today())
 
     bas_str = bas_tarih.strftime("%d-%m-%Y")
     bit_str = bit_tarih.strftime("%d-%m-%Y")
