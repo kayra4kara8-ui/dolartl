@@ -196,12 +196,12 @@ def apply_base(fig, **kwargs):
 @st.cache_data(ttl=3600, show_spinner=False)
 def evds_cek(api_key: str, seri: str, baslangic: str, bitis: str):
     """EVDS'den veri çek, (df, hata_mesaji) döndür."""
-    # EVDS resmi URL formatı
-    url = "https://evds2.tcmb.gov.tr/service/evds/series={}&startDate={}&endDate={}&type=json&frequency=1".format(
-        seri, baslangic, bitis
+    # EVDS URL formatı — key URL parametresi olarak gönderiliyor (header çalışmıyor)
+    url = "https://evds2.tcmb.gov.tr/service/evds/series={}&startDate={}&endDate={}&type=json&frequency=1&key={}".format(
+        seri, baslangic, bitis, api_key.strip()
     )
     try:
-        r = requests.get(url, headers={"key": api_key.strip()}, timeout=30)
+        r = requests.get(url, timeout=30)
     except requests.exceptions.Timeout:
         return None, "EVDS bağlantısı zaman aşımına uğradı (30s)."
     except requests.exceptions.ConnectionError:
