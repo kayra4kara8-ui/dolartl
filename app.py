@@ -1,4 +1,5 @@
 import streamlit as st
+import datetime
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
@@ -199,27 +200,28 @@ def apply_base(fig, **kwargs):
     return fig
 
 # ─── TCMB EVDS API ───────────────────────────────────────────────────────────
-@st.cache_data
-def evds_veri_cek(baslangic="01-01-2000", bitis=None):
-    """TCMB EVDS verisini evds paketi ile ceker. pip install evds"""
-    if bitis is None:
-        bitis = pd.Timestamp.today().strftime("%d-%m-%Y")
+@st.cache_data(show_spinner=False)
+def evds_ham_veri_cek():
+    """
+    TCMB EVDS'den 2000'den bugüne TÜM ham veriyi bir kez çeker ve cache'ler.
+    Tarih filtresi burada yapılmaz — ana akışta yapılır.
+    """
     try:
         from evds import evdsAPI
     except ImportError:
-        st.error("❌ `evds` paketi eksik. Terminalde calistirin: pip install evds")
+        st.error("❌ `evds` paketi eksik. Terminalde: pip install evds")
         return None
     try:
         client = evdsAPI(EVDS_API_KEY)
         seriler = ["TP.DK.USD.A.YTL", "TP.DK.USD.S.YTL", "TP.DK.EUR.A.YTL", "TP.DK.EUR.S.YTL"]
-        # evds paketi bazen startdate'i yok sayıyor — her zaman tam veri çek, sonra filtrele
+        bitis = pd.Timestamp.today().strftime("%d-%m-%Y")
         df = client.get_data(seriler, startdate="01-01-2000", enddate=bitis)
 
         if df is None or len(df) == 0:
-            st.error("API bos veri donurdu. Anahtarinizi kontrol edin.")
+            st.error("API boş veri döndürdü.")
             return None
 
-        # Tarih kolonunu bul ve normalize et
+        # Tarih kolonunu normalize et
         tarih_col = next((c for c in df.columns if "tarih" in c.lower() or "date" in c.lower()), None)
         if tarih_col and tarih_col != "Tarih":
             df = df.rename(columns={tarih_col: "Tarih"})
@@ -227,15 +229,9 @@ def evds_veri_cek(baslangic="01-01-2000", bitis=None):
         df["Tarih"] = pd.to_datetime(df["Tarih"], dayfirst=True, errors="coerce")
         df = df.dropna(subset=["Tarih"])
 
-        # Tarih aralığı filtresi (evds paketi startdate'i yok sayabilir)
-        bas_dt = pd.to_datetime(baslangic, dayfirst=True)
-        bit_dt = pd.to_datetime(bitis, dayfirst=True)
-        df = df[(df["Tarih"] >= bas_dt) & (df["Tarih"] <= bit_dt)]
-
         if "UNIXTIME" in df.columns:
             df = df.drop(columns=["UNIXTIME"])
 
-        # nokta -> alt cizgi
         col_map = {c: c.replace(".", "_").replace("-", "_") for c in df.columns if c != "Tarih"}
         df = df.rename(columns=col_map)
 
@@ -246,15 +242,21 @@ def evds_veri_cek(baslangic="01-01-2000", bitis=None):
         return df.sort_values("Tarih").reset_index(drop=True)
 
     except Exception as e:
-        st.error(f"""
-❌ Veri cekilemedi: `{e}`
+        st.error(f"❌ Veri çekilemedi: `{e}`
 
-**Cozum:**
-1. https://evds3.tcmb.gov.tr → Profilim → API Anahtari Kopyala
-2. `app.py` basindaki `EVDS_API_KEY = "..."` satirini guncelleyin
-3. Terminal: `pip install evds`
-""")
+https://evds3.tcmb.gov.tr → Profilim → API Anahtarı")
         return None
+
+
+def evds_veri_cek(baslangic="01-01-2000", bitis=None):
+    """Ham veriyi çekip tarih aralığına göre filtreler."""
+    df = evds_ham_veri_cek()
+    if df is None:
+        return None
+    bas_dt = pd.to_datetime(baslangic, dayfirst=True)
+    bit_dt = pd.to_datetime(bitis, dayfirst=True) if bitis else pd.Timestamp.today()
+    mask = (df["Tarih"] >= bas_dt) & (df["Tarih"] <= bit_dt)
+    return df[mask].reset_index(drop=True)
 
 def veri_isle_api(df_raw, doviz="USD", tur="Alis"):
     """Ham API verisini analiz için hazırlar."""
@@ -381,7 +383,6 @@ with st.sidebar:
     st.markdown("""<div style="font-family:'DM Mono',monospace;font-size:0.65rem;color:#4a6080;
         text-transform:uppercase;letter-spacing:0.1em;margin-bottom:8px;">Tarih Aralığı</div>""",
         unsafe_allow_html=True)
-    import datetime
     baslangic_dt = st.date_input(
         "Başlangıç Tarihi",
         value=datetime.date(2000, 1, 1),
