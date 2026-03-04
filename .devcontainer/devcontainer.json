@@ -5,6 +5,8 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime, date
 import requests
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 try:
     from evds import evdsAPI
 except ImportError:
@@ -216,7 +218,7 @@ def evds_cek(api_key: str, seri: str, baslangic: str, bitis: str):
     evds_hata = None
     if evdsAPI is not None:
         try:
-            client = evdsAPI(api_key.strip())
+            client = evdsAPI(api_key.strip(), legacySSL=True)
             raw_df = client.get_data([seri], startdate=fmt_dt(start), enddate=fmt_dt(end))
             if raw_df is not None and len(raw_df) > 0:
                 # İlk satır boş olabilir, sil
@@ -262,7 +264,7 @@ def evds_cek(api_key: str, seri: str, baslangic: str, bitis: str):
         ]:
             url = base + urlencode(params)
             try:
-                r = requests.get(url, headers={"key": api_key.strip()}, timeout=30)
+                r = requests.get(url, headers={"key": api_key.strip()}, timeout=30, verify=False)
             except Exception:
                 continue
             if r.status_code not in (200, 201):
