@@ -199,7 +199,7 @@ def apply_base(fig, **kwargs):
     return fig
 
 # ─── TCMB EVDS API ───────────────────────────────────────────────────────────
-@st.cache_data(ttl=3600)
+@st.cache_data
 def evds_veri_cek(baslangic="01-01-2000", bitis=None):
     """TCMB EVDS verisini evds paketi ile ceker. pip install evds"""
     if bitis is None:
@@ -376,14 +376,24 @@ with st.sidebar:
     st.markdown("""<div style="font-family:'DM Mono',monospace;font-size:0.65rem;color:#4a6080;
         text-transform:uppercase;letter-spacing:0.1em;margin-bottom:8px;">Tarih Aralığı</div>""",
         unsafe_allow_html=True)
-    col_y1, col_y2 = st.columns(2)
-    with col_y1:
-        baslangic_yil = st.number_input("Başlangıç", min_value=2000, max_value=2025, value=2000, step=1)
-    with col_y2:
-        bitis_yil = st.number_input("Bitiş", min_value=2001, max_value=2026, value=2026, step=1)
+    import datetime
+    baslangic_dt = st.date_input(
+        "Başlangıç Tarihi",
+        value=datetime.date(2000, 1, 1),
+        min_value=datetime.date(2000, 1, 1),
+        max_value=datetime.date.today(),
+        format="DD.MM.YYYY",
+    )
+    bitis_dt = st.date_input(
+        "Bitiş Tarihi",
+        value=datetime.date.today(),
+        min_value=datetime.date(2000, 1, 2),
+        max_value=datetime.date.today(),
+        format="DD.MM.YYYY",
+    )
 
-    baslangic_tarih = f"01-01-{baslangic_yil}"
-    bitis_tarih     = f"31-12-{bitis_yil}" if bitis_yil < 2026 else pd.Timestamp.today().strftime("%d-%m-%Y")
+    baslangic_tarih = baslangic_dt.strftime("%d-%m-%Y")
+    bitis_tarih     = bitis_dt.strftime("%d-%m-%Y")
 
     if st.button("🔄 Veriyi Yenile", use_container_width=True):
         st.cache_data.clear()
@@ -426,6 +436,7 @@ with st.sidebar:
     </div>""", unsafe_allow_html=True)
 
 # ─── VERİ ÇEKME ──────────────────────────────────────────────────────────────
+# Tarih değişince cache otomatik bozulsun (key olarak tarihleri geç)
 with st.spinner("🌐 TCMB EVDS'den veri çekiliyor..."):
     df_raw = evds_veri_cek(baslangic=baslangic_tarih, bitis=bitis_tarih)
 
