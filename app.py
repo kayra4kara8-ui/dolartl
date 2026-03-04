@@ -203,8 +203,8 @@ def apply_base(fig, **kwargs):
 @st.cache_data(show_spinner=False)
 def evds_ham_veri_cek():
     """
-    TCMB EVDS'den 2000'den bugüne TÜM ham veriyi bir kez çeker ve cache'ler.
-    Tarih filtresi burada yapılmaz — ana akışta yapılır.
+    TCMB EVDS'den 2000-bugün arası TÜM veriyi yıllık parçalar halinde çekip birleştirir.
+    evds paketi tek seferde sınırlı veri döndürdüğünden yıl yıl çekilir.
     """
     try:
         from evds import evdsAPI
@@ -214,12 +214,26 @@ def evds_ham_veri_cek():
     try:
         client = evdsAPI(EVDS_API_KEY)
         seriler = ["TP.DK.USD.A.YTL", "TP.DK.USD.S.YTL", "TP.DK.EUR.A.YTL", "TP.DK.EUR.S.YTL"]
-        bitis = pd.Timestamp.today().strftime("%d-%m-%Y")
-        df = client.get_data(seriler, startdate="01-01-2000", enddate=bitis)
 
-        if df is None or len(df) == 0:
-            st.error("API boş veri döndürdü.")
+        bugun = pd.Timestamp.today()
+        parcalar = []
+
+        # 2000'den bugüne yıl yıl çek
+        for yil in range(2000, bugun.year + 1):
+            bas = f"01-01-{yil}"
+            bit = f"31-12-{yil}" if yil < bugun.year else bugun.strftime("%d-%m-%Y")
+            try:
+                parca = client.get_data(seriler, startdate=bas, enddate=bit)
+                if parca is not None and len(parca) > 0:
+                    parcalar.append(parca)
+            except Exception:
+                continue
+
+        if not parcalar:
+            st.error("Hiç veri çekilemedi. API anahtarını kontrol edin.")
             return None
+
+        df = pd.concat(parcalar, ignore_index=True)
 
         # Tarih kolonunu normalize et
         tarih_col = next((c for c in df.columns if "tarih" in c.lower() or "date" in c.lower()), None)
@@ -228,6 +242,7 @@ def evds_ham_veri_cek():
 
         df["Tarih"] = pd.to_datetime(df["Tarih"], dayfirst=True, errors="coerce")
         df = df.dropna(subset=["Tarih"])
+        df = df.drop_duplicates(subset=["Tarih"])
 
         if "UNIXTIME" in df.columns:
             df = df.drop(columns=["UNIXTIME"])
@@ -441,7 +456,7 @@ with st.sidebar:
 
 # ─── VERİ ÇEKME ──────────────────────────────────────────────────────────────
 # Tarih değişince cache otomatik bozulsun (key olarak tarihleri geç)
-with st.spinner("🌐 TCMB EVDS'den veri çekiliyor..."):
+with st.spinner("🌐 TCMB EVDS'den 2000–bugün verisi çekiliyor (yıl yıl, ~26 istek)..."):
     df_raw = evds_veri_cek(baslangic=baslangic_tarih, bitis=bitis_tarih)
 
 if df_raw is None:
