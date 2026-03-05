@@ -387,7 +387,7 @@ def veri_isle_api(df_raw, doviz="USD", tur="Alis"):
 
 
 def spread_hesapla(df_raw, doviz="USD"):
-    """Alış-Satış spread analizi. Kolon adlarını dinamik olarak bulur."""
+    """Alis-Satis spread analizi. Kolon adlarini dinamik olarak bulur."""
     a_candidates = [f"TP_DK_{doviz}_A", f"TP_DK_{doviz}_A_YTL"]
     s_candidates = [f"TP_DK_{doviz}_S", f"TP_DK_{doviz}_S_YTL"]
 
@@ -398,17 +398,21 @@ def spread_hesapla(df_raw, doviz="USD"):
         return None
 
     sp = df_raw[["Tarih", a_col, s_col]].dropna().copy()
+    sp = sp.sort_values("Tarih").reset_index(drop=True)
     sp = sp.rename(columns={a_col: f"TP_DK_{doviz}_A", s_col: f"TP_DK_{doviz}_S"})
 
-    # Spread hesabı öncesi her iki seriyi de temizle
-    sp[f"TP_DK_{doviz}_A"] = _temizle_kur_serisi(sp[f"TP_DK_{doviz}_A"], sp["Tarih"])
-    sp[f"TP_DK_{doviz}_S"] = _temizle_kur_serisi(sp[f"TP_DK_{doviz}_S"], sp["Tarih"])
+    a_key = f"TP_DK_{doviz}_A"
+    s_key = f"TP_DK_{doviz}_S"
 
-    sp["Spread_TL"]  = sp[f"TP_DK_{doviz}_S"] - sp[f"TP_DK_{doviz}_A"]
-    sp["Spread_Pct"] = (sp["Spread_TL"] / sp[f"TP_DK_{doviz}_A"]) * 100
+    # _temizle_kur_serisi reset_index yapiyor, .values ile index bagimsiz ata
+    sp[a_key] = _temizle_kur_serisi(sp[a_key], sp["Tarih"]).values
+    sp[s_key] = _temizle_kur_serisi(sp[s_key], sp["Tarih"]).values
 
-    # Spread de mantıksız değerler içerebilir (negatif veya aşırı büyük) — temizle
-    sp.loc[sp["Spread_TL"] < 0, "Spread_TL"] = np.nan
+    sp["Spread_TL"]  = sp[s_key] - sp[a_key]
+    sp["Spread_Pct"] = (sp["Spread_TL"] / sp[a_key]) * 100
+
+    # Negatif veya aykiri spread degerleri temizle
+    sp.loc[sp["Spread_TL"] < 0, "Spread_TL"]   = np.nan
     sp.loc[sp["Spread_Pct"] < 0, "Spread_Pct"] = np.nan
     sp["Spread_TL"]  = sp["Spread_TL"].ffill()
     sp["Spread_Pct"] = sp["Spread_Pct"].ffill()
