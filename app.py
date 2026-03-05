@@ -202,7 +202,6 @@ def apply_base(fig, **kwargs):
     return fig
 
 # ─── TCMB EVDS API ───────────────────────────────────────────────────────────
-# ── EVDS3 doğrudan HTTP (evds paketi 1000 satır limiti nedeniyle bypass edildi) ──
 class _LegacySSL(HTTPAdapter):
     def init_poolmanager(self, *a, **kw):
         ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
@@ -281,9 +280,52 @@ def evds_veri_cek(baslangic="01-01-2000", bitis=None):
     mask = (df["Tarih"] >= bas_dt) & (df["Tarih"] <= bit_dt)
     return df[mask].reset_index(drop=True)
 
+
+def _temizle_kur_serisi(seri: pd.Series, tarihler: pd.Series) -> pd.Series:
+    """
+    Ham kur serisini çok katmanlı aykırı değer temizliğiyle düzeltir.
+
+    Katman 1 — TRL → TRY dönüşümü (2005 öncesi)
+        EVDS bazı eski kayıtları eski Türk Lirası (TRL) cinsinden döndürür.
+        2005 öncesi ve değer > 100 ise 1_000_000'e böl.
+
+    Katman 2 — Kaba birim hataları (medyan × eşik)
+        Tüm seri medyanının 20 katından büyük veya 1/20'sinden küçük değerleri
+        1000'e böl (YTL/TRY karışıklığı).
+
+    Katman 3 — Anlık veri hataları (günden güne imkânsız sıçrama)
+        Bir önceki güne göre mutlak değişim > %50 olan satırlar NaN yapılır
+        ve forward-fill ile doldurulur.
+        Türkiye'nin tarihsel en büyük tek günlük hareketi ~%25 (22.12.2021)
+        olduğundan %50 eşiği gerçek hiçbir olayı kesmez.
+    """
+    s = seri.copy().reset_index(drop=True)
+    t = tarihler.reset_index(drop=True)
+
+    # --- Katman 1: TRL → TRY (2005 öncesi, değer > 100) ---
+    trl_mask = (t < "2005-01-01") & (s > 100)
+    s[trl_mask] = s[trl_mask] / 1_000_000
+
+    # --- Katman 2: Medyan bazlı kaba birim hataları ---
+    medyan = s.median()
+    if medyan > 0:
+        aykiri = (s > medyan * 20) | (s < medyan / 20)
+        # Bunlar büyük ihtimalle /1000 hatası; düzelt
+        s[aykiri & (s > medyan * 20)] = s[aykiri & (s > medyan * 20)] / 1000
+        s[aykiri & (s < medyan / 20)] = s[aykiri & (s < medyan / 20)] * 1000
+
+    # --- Katman 3: Günden güne imkânsız sıçrama → NaN + ffill ---
+    pct_chg = s.pct_change().abs()
+    imkansiz = pct_chg > 0.50
+    if imkansiz.any():
+        s[imkansiz] = np.nan
+        s = s.ffill().bfill()
+
+    return s
+
+
 def veri_isle_api(df_raw, doviz="USD", tur="Alis"):
     """Ham API verisini analiz için hazırlar."""
-    # Kolon adı varyantlarını dinamik bul
     suffix = "A" if tur == "Alis" else "S"
     candidates = [
         f"TP_DK_{doviz}_{suffix}",
@@ -301,12 +343,8 @@ def veri_isle_api(df_raw, doviz="USD", tur="Alis"):
     df = df.dropna(subset=["Dolar_Kuru"])
     df = df.sort_values("Tarih").reset_index(drop=True)
 
-    # Aykırı değer düzeltme
-    medyan = df["Dolar_Kuru"].median()
-    if medyan > 0:
-        aykiri = (df["Dolar_Kuru"] > medyan * 10) | (df["Dolar_Kuru"] < medyan / 10)
-        if aykiri.any():
-            df.loc[aykiri, "Dolar_Kuru"] = df.loc[aykiri, "Dolar_Kuru"] / 1000
+    # ── Çok katmanlı aykırı değer temizliği ──
+    df["Dolar_Kuru"] = _temizle_kur_serisi(df["Dolar_Kuru"], df["Tarih"])
 
     df["Onceki_Kur"]    = df["Dolar_Kuru"].shift(1)
     df["Onceki_Tarih"]  = df["Tarih"].shift(1)
@@ -338,7 +376,6 @@ def veri_isle_api(df_raw, doviz="USD", tur="Alis"):
 
 def spread_hesapla(df_raw, doviz="USD"):
     """Alış-Satış spread analizi. Kolon adlarını dinamik olarak bulur."""
-    # Olası kolon adı varyantları
     a_candidates = [f"TP_DK_{doviz}_A", f"TP_DK_{doviz}_A_YTL"]
     s_candidates = [f"TP_DK_{doviz}_S", f"TP_DK_{doviz}_S_YTL"]
 
@@ -350,8 +387,20 @@ def spread_hesapla(df_raw, doviz="USD"):
 
     sp = df_raw[["Tarih", a_col, s_col]].dropna().copy()
     sp = sp.rename(columns={a_col: f"TP_DK_{doviz}_A", s_col: f"TP_DK_{doviz}_S"})
+
+    # Spread hesabı öncesi her iki seriyi de temizle
+    sp[f"TP_DK_{doviz}_A"] = _temizle_kur_serisi(sp[f"TP_DK_{doviz}_A"], sp["Tarih"])
+    sp[f"TP_DK_{doviz}_S"] = _temizle_kur_serisi(sp[f"TP_DK_{doviz}_S"], sp["Tarih"])
+
     sp["Spread_TL"]  = sp[f"TP_DK_{doviz}_S"] - sp[f"TP_DK_{doviz}_A"]
     sp["Spread_Pct"] = (sp["Spread_TL"] / sp[f"TP_DK_{doviz}_A"]) * 100
+
+    # Spread de mantıksız değerler içerebilir (negatif veya aşırı büyük) — temizle
+    sp.loc[sp["Spread_TL"] < 0, "Spread_TL"] = np.nan
+    sp.loc[sp["Spread_Pct"] < 0, "Spread_Pct"] = np.nan
+    sp["Spread_TL"]  = sp["Spread_TL"].ffill()
+    sp["Spread_Pct"] = sp["Spread_Pct"].ffill()
+
     return sp
 
 
@@ -465,7 +514,6 @@ with st.sidebar:
     </div>""", unsafe_allow_html=True)
 
 # ─── VERİ ÇEKME ──────────────────────────────────────────────────────────────
-# Tarih değişince cache otomatik bozulsun (key olarak tarihleri geç)
 with st.spinner("🌐 TCMB EVDS'den 2000–bugün verisi çekiliyor (yıl yıl, ~26 istek)..."):
     df_raw = evds_veri_cek(baslangic=baslangic_tarih, bitis=bitis_tarih)
 
@@ -1095,7 +1143,6 @@ with tab5:
         sp_son  = sp_df["Spread_TL"].iloc[-1]
         sp_pct  = sp_df["Spread_Pct"].mean()
 
-        # KPI
         st.markdown(f"""
         <div class="metric-row" style="grid-template-columns: repeat(4, 1fr);">
           <div class="spread-card">
@@ -1122,7 +1169,6 @@ with tab5:
         """, unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
 
-        # Spread zaman serisi
         sp_df["_sp_str"]  = sp_df["Spread_TL"].apply(lambda x: tr_fmt_kur(x, 4))
         sp_df["_spp_str"] = sp_df["Spread_Pct"].apply(lambda x: tr_fmt_pct(x, 4))
 
@@ -1165,7 +1211,6 @@ with tab5:
         )
         st.plotly_chart(fig_sp1, use_container_width=True)
 
-        # Spread % zaman serisi + rolling ortalama
         st.markdown('<div class="section-label">◈ Spread % & Yuvarlanmalı Ortalama</div>', unsafe_allow_html=True)
         sp_df["Spread_MA20"] = sp_df["Spread_Pct"].rolling(20).mean()
         sp_df["Spread_MA60"] = sp_df["Spread_Pct"].rolling(60).mean()
@@ -1193,7 +1238,6 @@ with tab5:
             hovermode="x unified")
         st.plotly_chart(fig_sp2, use_container_width=True)
 
-        # USD vs EUR spread karşılaştırması (eğer her ikisi mevcutsa)
         st.markdown('<div class="section-label">◈ USD vs EUR Spread Karşılaştırması</div>', unsafe_allow_html=True)
         sp_usd = spread_hesapla(df_raw, "USD")
         sp_eur = spread_hesapla(df_raw, "EUR")
