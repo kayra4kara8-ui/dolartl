@@ -321,6 +321,18 @@ def _temizle_kur_serisi(seri: pd.Series, tarihler: pd.Series) -> pd.Series:
         s[imkansiz] = np.nan
         s = s.ffill().bfill()
 
+    # --- Katman 4: Z-score bazlı lokal aykırı değer tespiti ---
+    # 30 günlük pencerede z-score > 4 olan değerler veri hatasıdır.
+    # Gerçek kriz günlerinde tüm piyasa hareket ettiğinden z-score patlamaz;
+    # yalnızca tek günlük hatalı kayıtlar yakalanır (örn. 05.01.2023 ~43,92).
+    rolling_med = s.rolling(window=30, center=True, min_periods=5).median()
+    rolling_std = s.rolling(window=30, center=True, min_periods=5).std()
+    z_score = (s - rolling_med) / (rolling_std + 1e-9)
+    aykiri_z = z_score.abs() > 4
+    if aykiri_z.any():
+        s[aykiri_z] = np.nan
+        s = s.ffill().bfill()
+
     return s
 
 
