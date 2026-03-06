@@ -1460,6 +1460,9 @@ with tab6:
     st.dataframe(hf_t, use_container_width=True, height=420)
 
     # ── Haftalık TÜM VERİ indirme ─────────────────────────────────────────
+    hf_bas_yil = int(hf_global["PztTarih"].dt.year.min())
+    hf_bit_yil = int(hf_global["CumTarih"].dt.year.max())
+    hf_bit_ay  = hf_global["CumTarih"].max().strftime("%d.%m.%Y")
     st.markdown(
         '<div class="section-label">◈ Haftalık Tüm Veri İndir '
         '<span style="color:#4a9eff;font-size:0.8rem;font-weight:400;">'
@@ -1469,7 +1472,8 @@ with tab6:
     )
     st.markdown(
         f"<div style='font-size:0.75rem;color:#4a6080;font-family:DM Mono,monospace;"
-        f"margin-bottom:12px;'>2000'den bugüne <b style='color:#4a9eff'>{len(hf_t_tumumu)}</b> haftalık kapanış verisi</div>",
+        f"margin-bottom:12px;'>{hf_bas_yil}–{hf_bit_yil} · Son kapanış {hf_bit_ay} · "
+        f"<b style='color:#4a9eff'>{len(hf_t_tumumu)}</b> haftalık kapanış verisi</div>",
         unsafe_allow_html=True
     )
 
@@ -1503,12 +1507,37 @@ with tab6:
         csv = top_sic.to_csv(index=False).encode("utf-8-sig")
         st.download_button("⬇ Sıçramalar CSV", csv, "sicramalar.csv", "text/csv", use_container_width=True)
     with dc2:
+        # Kümülatif (günlük) — tüm veri üzerinden
+        _cum_gun = df[["Tarih","Yil","Dolar_Kuru","Yuzde_Degisim"]].copy()
+        _cum_gun = _cum_gun.sort_values("Tarih").reset_index(drop=True)
+        _cum_gun["Kumülatif_%"] = (_cum_gun["Dolar_Kuru"] / _cum_gun["Dolar_Kuru"].iloc[0] - 1) * 100
+        _cum_gun["Drawdown_%"] = _cum_gun["Kumülatif_%"] - _cum_gun["Kumülatif_%"].cummax()
+        _cum_gun["Tarih"] = _cum_gun["Tarih"].dt.strftime("%d.%m.%Y")
+        _cum_gun = _cum_gun.rename(columns={"Dolar_Kuru":"Kur","Yuzde_Degisim":"Degisim_%"})
+
+        # Kümülatif (haftalık)
+        _cum_hf = hf_global[["PztTarih","CumTarih","PztKur","CumKur","HaftaDegisim"]].copy()
+        _cum_hf = _cum_hf.sort_values("CumTarih").reset_index(drop=True)
+        _cum_hf["Kumülatif_%"] = (_cum_hf["CumKur"] / _cum_hf["CumKur"].iloc[0] - 1) * 100
+        _cum_hf["Drawdown_%"] = _cum_hf["Kumülatif_%"] - _cum_hf["Kumülatif_%"].cummax()
+        _cum_hf["Hafta"] = _cum_hf["PztTarih"].dt.strftime("%d.%m.%Y") + " – " + _cum_hf["CumTarih"].dt.strftime("%d.%m.%Y")
+        _cum_hf = _cum_hf[["Hafta","CumKur","HaftaDegisim","Kumülatif_%","Drawdown_%"]]
+        _cum_hf.columns = ["Hafta","Kur","HaftaDegisim_%","Kumülatif_%","Drawdown_%"]
+
+        # Mevsimsellik (ay bazlı ort. günlük getiri)
+        _mevs = df.groupby("Ay")["Yuzde_Degisim"].mean().reset_index()
+        _mevs["AyAdi"] = _mevs["Ay"].map(TR_AY_UZUN)
+        _mevs = _mevs[["AyAdi","Yuzde_Degisim"]].rename(columns={"Yuzde_Degisim":"OrtGunlukGetiri_%"})
+
         buf = io.BytesIO()
         with pd.ExcelWriter(buf, engine="openpyxl") as w:
             top_sic.to_excel(    w, sheet_name="Sicramalar",        index=False)
             hf_t_tumumu.to_excel(w, sheet_name="Haftalik_Tum",      index=False)
             hf_t.to_excel(       w, sheet_name="Haftalik_Filtreli",  index=False)
             df.to_excel(         w, sheet_name="Tum_Gunluk_Veri",   index=False)
+            _cum_gun.to_excel(   w, sheet_name="Kumulatif_Gunluk",  index=False)
+            _cum_hf.to_excel(    w, sheet_name="Kumulatif_Haftalik", index=False)
+            _mevs.to_excel(      w, sheet_name="Mevsimsellik",       index=False)
             aylik.to_excel(      w, sheet_name="Aylik")
             yillik.to_excel(     w, sheet_name="Yillik")
             if sp_df is not None:
