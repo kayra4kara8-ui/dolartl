@@ -1280,8 +1280,24 @@ with tab5:
             st.info("USD ve EUR spread karşılaştırması için her iki dövizin alış/satış verisi gereklidir.")
 
 # ════════════ TAB 6 ════════════
+# ════════════ TAB 6 ════════════
 with tab6:
-    st.markdown('<div class="section-label">◈ Sıçrama Tablosu</div>', unsafe_allow_html=True)
+    # ── Aktif filtre özeti ──────────────────────────────────────────────────
+    yon_label = {"Tümü": "Tümü", "Yalnız Pozitif ↑": "Pozitif", "Yalnız Negatif ↓": "Negatif"}
+    st.markdown(f"""
+    <div style="background:#0d1a2e;border:1px solid #1e4a8a;border-radius:8px;padding:12px 16px;
+                margin-bottom:16px;font-family:'DM Mono',monospace;font-size:0.72rem;color:#4a9eff;">
+        🔎 Aktif Filtreler &nbsp;·&nbsp;
+        Eşik: <b style="color:#f6ad55">≥%{str(esik).replace('.',',')}</b> &nbsp;·&nbsp;
+        Yön: <b style="color:#f6ad55">{yon_label.get(yon, yon)}</b> &nbsp;·&nbsp;
+        Gösterim: <b style="color:#f6ad55">{gosterim_sec}</b> &nbsp;·&nbsp;
+        Haftalık Eşik: <b style="color:#f6ad55">≥%{str(haftalik_esik).replace('.',',')}</b> &nbsp;·&nbsp;
+        Haftalık Yön: <b style="color:#f6ad55">{yon_label.get(haftalik_yon, haftalik_yon)}</b>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Günlük sıçrama tablosu ──────────────────────────────────────────────
+    st.markdown(f'<div class="section-label">◈ Sıçrama Tablosu &nbsp;<span style="color:#f6ad55;font-size:0.8rem;">Eşik ≥%{str(esik).replace(".",",")} · {yon_label.get(yon,yon)} · {gosterim_sec} kayıt</span></div>', unsafe_allow_html=True)
     tbl = top_sic.copy().reset_index(drop=True)
     tbl.index = tbl.index + 1
     tbl_show = pd.DataFrame({
@@ -1289,7 +1305,7 @@ with tab6:
         "Tarih":      tbl["Tarih"].dt.strftime("%d.%m.%Y"),
         "Yıl":        tbl["Yil"],
         "Ay":         tbl["Ay_Adi"],
-        "Gün Adı":    tbl["Gun_Adi"],
+        "Gün Adı":    tbl["Gun_Adi"].map(TR_GUN),
         "Kur":        tbl["Dolar_Kuru"].apply(tr_fmt_kur),
         "Önceki Kur": tbl["Onceki_Kur"].apply(tr_fmt_kur),
         "Değişim %":  tbl["Yuzde_Degisim"].apply(tr_fmt_pct),
@@ -1300,12 +1316,12 @@ with tab6:
 
     c1, c2 = st.columns(2)
     with c1:
-        st.markdown('<div class="section-label">◈ Aylık Özet</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="section-label">◈ Aylık Özet &nbsp;<span style="color:#f6ad55;font-size:0.8rem;">Eşik ≥%{str(esik).replace(".",",")} · {yon_label.get(yon,yon)}</span></div>', unsafe_allow_html=True)
         aylik = sicramalar.groupby("Ay_Adi")["Abs_Degisim"].agg(["count","mean","max","min"]).round(3)
         aylik.columns = ["Toplam","Ort. %","Maks %","Min %"]
         st.dataframe(aylik, use_container_width=True)
     with c2:
-        st.markdown('<div class="section-label">◈ Yıllık Özet</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="section-label">◈ Yıllık Özet &nbsp;<span style="color:#f6ad55;font-size:0.8rem;">Eşik ≥%{str(esik).replace(".",",")} · {yon_label.get(yon,yon)}</span></div>', unsafe_allow_html=True)
         yillik = sicramalar.groupby("Yil").agg(
             Toplam=("Abs_Degisim","count"), Ort_Pct=("Abs_Degisim","mean"),
             Pozitif=("Yuzde_Degisim", lambda x: (x>0).sum()),
@@ -1315,8 +1331,18 @@ with tab6:
         yillik.columns = ["Toplam","Ort. %","Pozitif","Negatif","Maks %"]
         st.dataframe(yillik, use_container_width=True)
 
-    st.markdown('<div class="section-label">◈ Haftalık Değişim Tablosu (Pzt → Cum)</div>', unsafe_allow_html=True)
-    hf_t = hf_global[["PztTarih","CumTarih","PztKur","CumKur","HaftaDegisim"]].copy()
+    # ── Haftalık tablo — filtre UYGULANMIŞ ─────────────────────────────────
+    st.markdown(f'<div class="section-label">◈ Haftalık Değişim Tablosu &nbsp;<span style="color:#f6ad55;font-size:0.8rem;">Eşik ≥%{str(haftalik_esik).replace(".",",")} · {yon_label.get(haftalik_yon,haftalik_yon)}</span></div>', unsafe_allow_html=True)
+
+    # Haftalık yön filtresini uygula
+    if haftalik_yon == "Yalnız Pozitif ↑":
+        hf_tablo = hf_global[hf_global["HaftaDegisim"] >= haftalik_esik].copy()
+    elif haftalik_yon == "Yalnız Negatif ↓":
+        hf_tablo = hf_global[hf_global["HaftaDegisim"] <= -haftalik_esik].copy()
+    else:
+        hf_tablo = hf_global[hf_global["HaftaDegisim"].abs() >= haftalik_esik].copy()
+
+    hf_t = hf_tablo[["PztTarih","CumTarih","PztKur","CumKur","HaftaDegisim"]].copy()
     hf_t.insert(0, "Hafta", hf_t["PztTarih"].dt.strftime("%d.%m.%Y") + " – " + hf_t["CumTarih"].dt.strftime("%d.%m.%Y"))
     hf_t.insert(0, "Yıl", hf_t["PztTarih"].dt.year)
     hf_t["Pzt Kur"]   = hf_t["PztKur"].apply(tr_fmt_kur)
@@ -1325,8 +1351,11 @@ with tab6:
     hf_t["Yön"]       = hf_t["HaftaDegisim"].apply(lambda x: "↑" if x > 0 else "↓")
     hf_t = hf_t[["Yıl","Hafta","Pzt Kur","Cum Kur","Değişim %","Yön"]].sort_values("Hafta", ascending=False).reset_index(drop=True)
     hf_t.index = hf_t.index + 1
+
+    st.markdown(f"<div style='font-size:0.75rem;color:#4a6080;font-family:DM Mono,monospace;margin-bottom:8px;'>Toplam <b style='color:#f6ad55'>{len(hf_t)}</b> hafta eşiği karşılıyor</div>", unsafe_allow_html=True)
     st.dataframe(hf_t, use_container_width=True, height=420)
 
+    # ── Dışa aktar ──────────────────────────────────────────────────────────
     st.markdown('<div class="section-label">◈ Dışa Aktar</div>', unsafe_allow_html=True)
     dc1, dc2 = st.columns(2)
     with dc1:
@@ -1352,3 +1381,4 @@ st.markdown("""
     TCMB EVDS · USDTRY / EURTRY ANALİZ PLATFORMU · STREAMLIT + PLOTLY
 </div>
 """, unsafe_allow_html=True)
+
