@@ -483,7 +483,7 @@ with st.sidebar:
         letter-spacing:0.15em;color:#1b6cf2;padding:20px 0 12px 0;border-bottom:1px solid #1e2d4a;">
         ◈ Parametre Kontrolü</div>""", unsafe_allow_html=True)
     st.markdown("<br>", unsafe_allow_html=True)
-    esik            = st.slider("Günlük Sıçrama Eşiği (%)", 0.5, 10.0, 2.0, 0.1)
+    esik            = st.slider("Günlük Sıçrama Eşiği (%)", 0.0, 10.0, 2.0, 0.1)
     gosterim_sec    = st.selectbox("Gösterilecek Sıçrama Sayısı", [10, 20, 30, 50, 75, 100, "Tümü"], index=2)
     yon             = st.radio("Sıçrama Yönü", ["Tümü", "Yalnız Pozitif ↑", "Yalnız Negatif ↓"])
 
@@ -506,7 +506,7 @@ with st.sidebar:
         letter-spacing:0.15em;color:#1b6cf2;padding:20px 0 12px 0;border-bottom:1px solid #1e2d4a;">
         ◈ İleri Analiz</div>""", unsafe_allow_html=True)
     st.markdown("<br>", unsafe_allow_html=True)
-    fwd_threshold   = st.slider("Tetikleyici Eşik (%)", 0.5, 15.0, 3.0, 0.5)
+    fwd_threshold   = st.slider("Tetikleyici Eşik (%)", 0.0, 15.0, 3.0, 0.5)
 
     st.markdown("""<div style="font-size:0.72rem;color:#3a5070;margin-top:20px;line-height:1.9;
         border-top:1px solid #1e2d4a;padding-top:12px;">
