@@ -98,6 +98,17 @@ div[data-testid="stDataFrame"] { border-radius: 8px; overflow: hidden; border: 1
 .stRadio label { font-size: 0.85rem !important; }
 .stInfo { background: #0d1a2e; border: 1px solid #1e4a8a; border-radius: 6px; }
 .block-container { padding-top: 1.5rem; padding-bottom: 2rem; max-width: 1400px; }
+.filter-banner {
+    background: #0d1a2e; border: 1px solid #1e4a8a; border-radius: 8px;
+    padding: 12px 16px; margin-bottom: 16px;
+    font-family: 'DM Mono', monospace; font-size: 0.72rem; color: #4a9eff;
+    line-height: 1.8;
+}
+.filter-tag {
+    display: inline-block; background: rgba(246,173,85,0.12); color: #f6ad55;
+    border: 1px solid rgba(246,173,85,0.3); border-radius: 4px;
+    padding: 1px 7px; margin: 0 3px; font-size: 0.72rem;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -216,7 +227,6 @@ def _evds_session():
     return s
 
 def _evds_cek_blok(session, bas, bit):
-    """Tek bir tarih bloğunu çeker."""
     SERILER = "TP.DK.USD.A.YTL-TP.DK.USD.S.YTL-TP.DK.EUR.A.YTL-TP.DK.EUR.S.YTL"
     BASE    = "https://evds3.tcmb.gov.tr/igmevdsms-dis/"
     params  = f"series={SERILER}&startDate={bas}&endDate={bit}&type=json&frequency=1&formulas=&aggregationTypes="
@@ -235,11 +245,6 @@ def _evds_cek_blok(session, bas, bit):
 
 @st.cache_data(show_spinner=False)
 def evds_ham_veri_cek():
-    """
-    2000'den bugüne tüm kur verisini 2'şer yıllık bloklar halinde çeker.
-    Her blok max ~731 satır — 1000 satır limitinin altında kalır.
-    Sonuç cache'lenir, sayfa yenilenene kadar tekrar çekilmez.
-    """
     session = _evds_session()
     parcalar = []
     bugun = pd.Timestamp.today()
@@ -271,7 +276,6 @@ def evds_ham_veri_cek():
 
 
 def evds_veri_cek(baslangic="01-01-2000", bitis=None):
-    """Ham veriyi çekip tarih aralığına göre filtreler."""
     df = evds_ham_veri_cek()
     if df is None:
         return None
@@ -282,49 +286,24 @@ def evds_veri_cek(baslangic="01-01-2000", bitis=None):
 
 
 def _temizle_kur_serisi(seri: pd.Series, tarihler: pd.Series) -> pd.Series:
-    """
-    Ham kur serisini çok katmanlı aykırı değer temizliğiyle düzeltir.
-
-    Katman 1 — TRL → TRY dönüşümü (2005 öncesi)
-        EVDS bazı eski kayıtları eski Türk Lirası (TRL) cinsinden döndürür.
-        2005 öncesi ve değer > 100 ise 1_000_000'e böl.
-
-    Katman 2 — Kaba birim hataları (medyan × eşik)
-        Tüm seri medyanının 20 katından büyük veya 1/20'sinden küçük değerleri
-        1000'e böl (YTL/TRY karışıklığı).
-
-    Katman 3 — Anlık veri hataları (günden güne imkânsız sıçrama)
-        Bir önceki güne göre mutlak değişim > %50 olan satırlar NaN yapılır
-        ve forward-fill ile doldurulur.
-        Türkiye'nin tarihsel en büyük tek günlük hareketi ~%25 (22.12.2021)
-        olduğundan %50 eşiği gerçek hiçbir olayı kesmez.
-    """
     s = seri.copy().reset_index(drop=True)
     t = tarihler.reset_index(drop=True)
 
-    # --- Katman 1: TRL → TRY (2005 öncesi, değer > 100) ---
     trl_mask = (t < "2005-01-01") & (s > 100)
     s[trl_mask] = s[trl_mask] / 1_000_000
 
-    # --- Katman 2: Medyan bazlı kaba birim hataları ---
     medyan = s.median()
     if medyan > 0:
         aykiri = (s > medyan * 20) | (s < medyan / 20)
-        # Bunlar büyük ihtimalle /1000 hatası; düzelt
         s[aykiri & (s > medyan * 20)] = s[aykiri & (s > medyan * 20)] / 1000
         s[aykiri & (s < medyan / 20)] = s[aykiri & (s < medyan / 20)] * 1000
 
-    # --- Katman 3: Günden güne imkânsız sıçrama → NaN + ffill ---
     pct_chg = s.pct_change().abs()
     imkansiz = pct_chg > 0.50
     if imkansiz.any():
         s[imkansiz] = np.nan
         s = s.ffill().bfill()
 
-    # --- Katman 4: Z-score bazlı lokal aykırı değer tespiti ---
-    # 30 günlük pencerede z-score > 4 olan değerler veri hatasıdır.
-    # Gerçek kriz günlerinde tüm piyasa hareket ettiğinden z-score patlamaz;
-    # yalnızca tek günlük hatalı kayıtlar yakalanır (örn. 05.01.2023 ~43,92).
     rolling_med = s.rolling(window=30, center=True, min_periods=5).median()
     rolling_std = s.rolling(window=30, center=True, min_periods=5).std()
     z_score = (s - rolling_med) / (rolling_std + 1e-9)
@@ -337,7 +316,6 @@ def _temizle_kur_serisi(seri: pd.Series, tarihler: pd.Series) -> pd.Series:
 
 
 def veri_isle_api(df_raw, doviz="USD", tur="Alis"):
-    """Ham API verisini analiz için hazırlar."""
     suffix = "A" if tur == "Alis" else "S"
     candidates = [
         f"TP_DK_{doviz}_{suffix}",
@@ -355,7 +333,6 @@ def veri_isle_api(df_raw, doviz="USD", tur="Alis"):
     df = df.dropna(subset=["Dolar_Kuru"])
     df = df.sort_values("Tarih").reset_index(drop=True)
 
-    # ── Çok katmanlı aykırı değer temizliği ──
     df["Dolar_Kuru"] = _temizle_kur_serisi(df["Dolar_Kuru"], df["Tarih"])
 
     df["Onceki_Kur"]    = df["Dolar_Kuru"].shift(1)
@@ -387,7 +364,6 @@ def veri_isle_api(df_raw, doviz="USD", tur="Alis"):
 
 
 def spread_hesapla(df_raw, doviz="USD"):
-    """Alis-Satis spread analizi. Kolon adlarini dinamik olarak bulur."""
     a_candidates = [f"TP_DK_{doviz}_A", f"TP_DK_{doviz}_A_YTL"]
     s_candidates = [f"TP_DK_{doviz}_S", f"TP_DK_{doviz}_S_YTL"]
 
@@ -404,14 +380,12 @@ def spread_hesapla(df_raw, doviz="USD"):
     a_key = f"TP_DK_{doviz}_A"
     s_key = f"TP_DK_{doviz}_S"
 
-    # _temizle_kur_serisi reset_index yapiyor, .values ile index bagimsiz ata
     sp[a_key] = _temizle_kur_serisi(sp[a_key], sp["Tarih"]).values
     sp[s_key] = _temizle_kur_serisi(sp[s_key], sp["Tarih"]).values
 
     sp["Spread_TL"]  = sp[s_key] - sp[a_key]
     sp["Spread_Pct"] = (sp["Spread_TL"] / sp[a_key]) * 100
 
-    # Negatif veya aykiri spread degerleri temizle
     sp.loc[sp["Spread_TL"] < 0, "Spread_TL"]   = np.nan
     sp.loc[sp["Spread_Pct"] < 0, "Spread_Pct"] = np.nan
     sp["Spread_TL"]  = sp["Spread_TL"].ffill()
@@ -733,6 +707,65 @@ with tab1:
                   <div class="jump-meta">{fkur(r['Onceki_Kur'])} → {fkur(r['Dolar_Kuru'])} ₺</div>
                   <div class="jump-meta">+{int(r['Gun_Farki'])} gün arayla</div>
                 </div>""", unsafe_allow_html=True)
+
+    # ── Günlük Sıçrama Tablosu & İndir ────────────────────────────────────
+    esik_s_t1 = str(esik).replace(".", ",")
+    yon_label_t1 = {
+        "Tümü":             "Tümü",
+        "Yalnız Pozitif ↑": "Yalnız ↑ Pozitif",
+        "Yalnız Negatif ↓": "Yalnız ↓ Negatif",
+    }
+    st.markdown(
+        f'<div class="section-label">◈ Günlük Sıçrama Tablosu '
+        f'<span style="color:#f6ad55;font-size:0.8rem;font-weight:400;">'
+        f'· Eşik ≥%{esik_s_t1} · {yon_label_t1.get(yon, yon)} · {gosterim_sec} kayıt'
+        f'</span></div>',
+        unsafe_allow_html=True,
+    )
+
+    tbl_t1 = top_sic.copy().reset_index(drop=True)
+    tbl_t1.index = tbl_t1.index + 1
+    tbl_show_t1 = pd.DataFrame({
+        "#":           tbl_t1.index,
+        "Tarih":       tbl_t1["Tarih"].dt.strftime("%d.%m.%Y"),
+        "Yıl":         tbl_t1["Yil"],
+        "Ay":          tbl_t1["Ay_Adi"],
+        "Gün":         tbl_t1["Gun_Adi"].map(TR_GUN),
+        "Kur (₺)":     tbl_t1["Dolar_Kuru"].apply(tr_fmt_kur),
+        "Önceki (₺)":  tbl_t1["Onceki_Kur"].apply(tr_fmt_kur),
+        "Değişim %":   tbl_t1["Yuzde_Degisim"].apply(tr_fmt_pct),
+        "TL Fark":     tbl_t1["TL_Degisim"].apply(lambda x: tr_fmt_kur(x, 4)),
+        "Gün Farkı":   tbl_t1["Gun_Farki"].astype(int),
+    })
+
+    st.markdown(
+        f"<div style='font-size:0.75rem;color:#4a6080;font-family:DM Mono,monospace;"
+        f"margin-bottom:8px;'>Toplam <b style='color:#f6ad55'>{len(tbl_show_t1)}</b> kayıt listeleniyor</div>",
+        unsafe_allow_html=True,
+    )
+    st.dataframe(tbl_show_t1, use_container_width=True, height=400)
+
+    dl_col1, dl_col2, _ = st.columns([1, 1, 4])
+    with dl_col1:
+        csv_t1 = tbl_show_t1.to_csv(index=False).encode("utf-8-sig")
+        st.download_button(
+            "⬇ CSV İndir",
+            csv_t1,
+            f"gunluk_sicramalar_esik{esik_s_t1}.csv",
+            "text/csv",
+            use_container_width=True,
+        )
+    with dl_col2:
+        buf_t1 = io.BytesIO()
+        with pd.ExcelWriter(buf_t1, engine="openpyxl") as w:
+            tbl_show_t1.to_excel(w, sheet_name="Gunluk_Sicramalar", index=False)
+        st.download_button(
+            "⬇ Excel İndir",
+            buf_t1.getvalue(),
+            f"gunluk_sicramalar_esik{esik_s_t1}.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
 
 # ════════════ TAB 2 ════════════
 with tab2:
@@ -1279,62 +1312,107 @@ with tab5:
         else:
             st.info("USD ve EUR spread karşılaştırması için her iki dövizin alış/satış verisi gereklidir.")
 
-# ════════════ TAB 6 ════════════
-# ════════════ TAB 6 ════════════
+# ════════════ TAB 6 — TABLOLAR ════════════
 with tab6:
-    # ── Aktif filtre özeti ──────────────────────────────────────────────────
-    yon_label = {"Tümü": "Tümü", "Yalnız Pozitif ↑": "Pozitif", "Yalnız Negatif ↓": "Negatif"}
+
+    # ── Yardımcı: yön etiketi ──────────────────────────────────────────────
+    yon_label = {
+        "Tümü":              "Tümü",
+        "Yalnız Pozitif ↑":  "Yalnız ↑ Pozitif",
+        "Yalnız Negatif ↓":  "Yalnız ↓ Negatif",
+    }
+
+    # ── Aktif filtre banner ────────────────────────────────────────────────
+    esik_s   = str(esik).replace(".", ",")
+    hf_esik_s = str(haftalik_esik).replace(".", ",")
     st.markdown(f"""
-    <div style="background:#0d1a2e;border:1px solid #1e4a8a;border-radius:8px;padding:12px 16px;
-                margin-bottom:16px;font-family:'DM Mono',monospace;font-size:0.72rem;color:#4a9eff;">
-        🔎 Aktif Filtreler &nbsp;·&nbsp;
-        Eşik: <b style="color:#f6ad55">≥%{str(esik).replace('.',',')}</b> &nbsp;·&nbsp;
-        Yön: <b style="color:#f6ad55">{yon_label.get(yon, yon)}</b> &nbsp;·&nbsp;
-        Gösterim: <b style="color:#f6ad55">{gosterim_sec}</b> &nbsp;·&nbsp;
-        Haftalık Eşik: <b style="color:#f6ad55">≥%{str(haftalik_esik).replace('.',',')}</b> &nbsp;·&nbsp;
-        Haftalık Yön: <b style="color:#f6ad55">{yon_label.get(haftalik_yon, haftalik_yon)}</b>
+    <div class="filter-banner">
+        🔎 &nbsp;Aktif Filtreler &nbsp;·&nbsp;
+        Günlük Eşik: <span class="filter-tag">≥ %{esik_s}</span>
+        Yön: <span class="filter-tag">{yon_label.get(yon, yon)}</span>
+        Gösterim: <span class="filter-tag">{gosterim_sec}</span>
+        &nbsp;&nbsp;|&nbsp;&nbsp;
+        Haftalık Eşik: <span class="filter-tag">≥ %{hf_esik_s}</span>
+        Haftalık Yön: <span class="filter-tag">{yon_label.get(haftalik_yon, haftalik_yon)}</span>
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Günlük sıçrama tablosu ──────────────────────────────────────────────
-    st.markdown(f'<div class="section-label">◈ Sıçrama Tablosu &nbsp;<span style="color:#f6ad55;font-size:0.8rem;">Eşik ≥%{str(esik).replace(".",",")} · {yon_label.get(yon,yon)} · {gosterim_sec} kayıt</span></div>', unsafe_allow_html=True)
+    # ── Günlük sıçrama tablosu ─────────────────────────────────────────────
+    st.markdown(
+        f'<div class="section-label">◈ Sıçrama Tablosu '
+        f'<span style="color:#f6ad55;font-size:0.8rem;font-weight:400;">'
+        f'· Eşik ≥%{esik_s} · {yon_label.get(yon, yon)} · {gosterim_sec} kayıt'
+        f'</span></div>',
+        unsafe_allow_html=True
+    )
     tbl = top_sic.copy().reset_index(drop=True)
     tbl.index = tbl.index + 1
     tbl_show = pd.DataFrame({
-        "#":          tbl.index,
-        "Tarih":      tbl["Tarih"].dt.strftime("%d.%m.%Y"),
-        "Yıl":        tbl["Yil"],
-        "Ay":         tbl["Ay_Adi"],
-        "Gün Adı":    tbl["Gun_Adi"].map(TR_GUN),
-        "Kur":        tbl["Dolar_Kuru"].apply(tr_fmt_kur),
-        "Önceki Kur": tbl["Onceki_Kur"].apply(tr_fmt_kur),
-        "Değişim %":  tbl["Yuzde_Degisim"].apply(tr_fmt_pct),
-        "TL Δ":       tbl["TL_Degisim"].apply(lambda x: tr_fmt_kur(x, 4)),
-        "Gün Farkı":  tbl["Gun_Farki"].astype(int),
+        "#":           tbl.index,
+        "Tarih":       tbl["Tarih"].dt.strftime("%d.%m.%Y"),
+        "Yıl":         tbl["Yil"],
+        "Ay":          tbl["Ay_Adi"],
+        "Gün Adı":     tbl["Gun_Adi"].map(TR_GUN),
+        "Kur":         tbl["Dolar_Kuru"].apply(tr_fmt_kur),
+        "Önceki Kur":  tbl["Onceki_Kur"].apply(tr_fmt_kur),
+        "Değişim %":   tbl["Yuzde_Degisim"].apply(tr_fmt_pct),
+        "TL Δ":        tbl["TL_Degisim"].apply(lambda x: tr_fmt_kur(x, 4)),
+        "Gün Farkı":   tbl["Gun_Farki"].astype(int),
     })
+    st.markdown(
+        f"<div style='font-size:0.75rem;color:#4a6080;font-family:DM Mono,monospace;"
+        f"margin-bottom:8px;'>Toplam <b style='color:#f6ad55'>{len(tbl_show)}</b> kayıt</div>",
+        unsafe_allow_html=True
+    )
     st.dataframe(tbl_show, use_container_width=True, height=420)
 
+    # ── Aylık & Yıllık özetler ─────────────────────────────────────────────
     c1, c2 = st.columns(2)
     with c1:
-        st.markdown(f'<div class="section-label">◈ Aylık Özet &nbsp;<span style="color:#f6ad55;font-size:0.8rem;">Eşik ≥%{str(esik).replace(".",",")} · {yon_label.get(yon,yon)}</span></div>', unsafe_allow_html=True)
-        aylik = sicramalar.groupby("Ay_Adi")["Abs_Degisim"].agg(["count","mean","max","min"]).round(3)
-        aylik.columns = ["Toplam","Ort. %","Maks %","Min %"]
+        st.markdown(
+            f'<div class="section-label">◈ Aylık Özet '
+            f'<span style="color:#f6ad55;font-size:0.8rem;font-weight:400;">'
+            f'· Eşik ≥%{esik_s} · {yon_label.get(yon, yon)}'
+            f'</span></div>',
+            unsafe_allow_html=True
+        )
+        aylik = (
+            sicramalar
+            .groupby("Ay_Adi")["Abs_Degisim"]
+            .agg(["count", "mean", "max", "min"])
+            .round(3)
+        )
+        aylik.columns = ["Toplam", "Ort. %", "Maks %", "Min %"]
         st.dataframe(aylik, use_container_width=True)
+
     with c2:
-        st.markdown(f'<div class="section-label">◈ Yıllık Özet &nbsp;<span style="color:#f6ad55;font-size:0.8rem;">Eşik ≥%{str(esik).replace(".",",")} · {yon_label.get(yon,yon)}</span></div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="section-label">◈ Yıllık Özet '
+            f'<span style="color:#f6ad55;font-size:0.8rem;font-weight:400;">'
+            f'· Eşik ≥%{esik_s} · {yon_label.get(yon, yon)}'
+            f'</span></div>',
+            unsafe_allow_html=True
+        )
         yillik = sicramalar.groupby("Yil").agg(
-            Toplam=("Abs_Degisim","count"), Ort_Pct=("Abs_Degisim","mean"),
-            Pozitif=("Yuzde_Degisim", lambda x: (x>0).sum()),
-            Negatif=("Yuzde_Degisim", lambda x: (x<0).sum()),
-            Maks=("Abs_Degisim","max")
+            Toplam    = ("Abs_Degisim",     "count"),
+            Ort_Pct   = ("Abs_Degisim",     "mean"),
+            Pozitif   = ("Yuzde_Degisim",   lambda x: (x > 0).sum()),
+            Negatif   = ("Yuzde_Degisim",   lambda x: (x < 0).sum()),
+            Maks      = ("Abs_Degisim",     "max"),
         ).round(3)
-        yillik.columns = ["Toplam","Ort. %","Pozitif","Negatif","Maks %"]
+        yillik.columns = ["Toplam", "Ort. %", "Pozitif", "Negatif", "Maks %"]
         st.dataframe(yillik, use_container_width=True)
 
-    # ── Haftalık tablo — filtre UYGULANMIŞ ─────────────────────────────────
-    st.markdown(f'<div class="section-label">◈ Haftalık Değişim Tablosu &nbsp;<span style="color:#f6ad55;font-size:0.8rem;">Eşik ≥%{str(haftalik_esik).replace(".",",")} · {yon_label.get(haftalik_yon,haftalik_yon)}</span></div>', unsafe_allow_html=True)
+    # ── Haftalık tablo — FİLTRELİ görünüm ────────────────────────────────
+    st.markdown(
+        f'<div class="section-label">◈ Haftalık Değişim Tablosu (Pzt → Cum) '
+        f'<span style="color:#f6ad55;font-size:0.8rem;font-weight:400;">'
+        f'· Eşik ≥%{hf_esik_s} · {yon_label.get(haftalik_yon, haftalik_yon)}'
+        f'</span></div>',
+        unsafe_allow_html=True
+    )
 
-    # Haftalık yön filtresini uygula
+    # Haftalık yön + eşik filtresini tabloya uygula
     if haftalik_yon == "Yalnız Pozitif ↑":
         hf_tablo = hf_global[hf_global["HaftaDegisim"] >= haftalik_esik].copy()
     elif haftalik_yon == "Yalnız Negatif ↓":
@@ -1342,37 +1420,94 @@ with tab6:
     else:
         hf_tablo = hf_global[hf_global["HaftaDegisim"].abs() >= haftalik_esik].copy()
 
-    hf_t = hf_tablo[["PztTarih","CumTarih","PztKur","CumKur","HaftaDegisim"]].copy()
-    hf_t.insert(0, "Hafta", hf_t["PztTarih"].dt.strftime("%d.%m.%Y") + " – " + hf_t["CumTarih"].dt.strftime("%d.%m.%Y"))
-    hf_t.insert(0, "Yıl", hf_t["PztTarih"].dt.year)
-    hf_t["Pzt Kur"]   = hf_t["PztKur"].apply(tr_fmt_kur)
-    hf_t["Cum Kur"]   = hf_t["CumKur"].apply(tr_fmt_kur)
-    hf_t["Değişim %"] = hf_t["HaftaDegisim"].apply(tr_fmt_pct)
-    hf_t["Yön"]       = hf_t["HaftaDegisim"].apply(lambda x: "↑" if x > 0 else "↓")
-    hf_t = hf_t[["Yıl","Hafta","Pzt Kur","Cum Kur","Değişim %","Yön"]].sort_values("Hafta", ascending=False).reset_index(drop=True)
-    hf_t.index = hf_t.index + 1
+    def _hf_df_hazirla(kaynak):
+        t = kaynak[["PztTarih", "CumTarih", "PztKur", "CumKur", "HaftaDegisim"]].copy()
+        t.insert(0, "Yıl",   t["PztTarih"].dt.year)
+        t.insert(1, "Hafta", t["PztTarih"].dt.strftime("%d.%m.%Y") + " – " + t["CumTarih"].dt.strftime("%d.%m.%Y"))
+        t["Pzt Kur"]   = t["PztKur"].apply(tr_fmt_kur)
+        t["Cum Kur"]   = t["CumKur"].apply(tr_fmt_kur)
+        t["Değişim %"] = t["HaftaDegisim"].apply(tr_fmt_pct)
+        t["Yön"]       = t["HaftaDegisim"].apply(lambda x: "↑" if x > 0 else "↓")
+        t = (
+            t[["Yıl", "Hafta", "Pzt Kur", "Cum Kur", "Değişim %", "Yön"]]
+            .sort_values("Hafta", ascending=False)
+            .reset_index(drop=True)
+        )
+        t.index = t.index + 1
+        return t
 
-    st.markdown(f"<div style='font-size:0.75rem;color:#4a6080;font-family:DM Mono,monospace;margin-bottom:8px;'>Toplam <b style='color:#f6ad55'>{len(hf_t)}</b> hafta eşiği karşılıyor</div>", unsafe_allow_html=True)
+    hf_t          = _hf_df_hazirla(hf_tablo)   # filtreli — ekranda göster
+    hf_t_tumumu   = _hf_df_hazirla(hf_global)  # filtresiz — indirme için
+
+    st.markdown(
+        f"<div style='font-size:0.75rem;color:#4a6080;font-family:DM Mono,monospace;"
+        f"margin-bottom:8px;'>Filtreli: <b style='color:#f6ad55'>{len(hf_t)}</b> hafta "
+        f"&nbsp;·&nbsp; Toplam: <b style='color:#4a9eff'>{len(hf_t_tumumu)}</b> hafta</div>",
+        unsafe_allow_html=True
+    )
     st.dataframe(hf_t, use_container_width=True, height=420)
 
-    # ── Dışa aktar ──────────────────────────────────────────────────────────
-    st.markdown('<div class="section-label">◈ Dışa Aktar</div>', unsafe_allow_html=True)
+    # ── Haftalık TÜM VERİ indirme ─────────────────────────────────────────
+    st.markdown(
+        '<div class="section-label">◈ Haftalık Tüm Veri İndir '
+        '<span style="color:#4a9eff;font-size:0.8rem;font-weight:400;">'
+        '· Filtre uygulanmadan, tüm haftalar'
+        '</span></div>',
+        unsafe_allow_html=True
+    )
+    st.markdown(
+        f"<div style='font-size:0.75rem;color:#4a6080;font-family:DM Mono,monospace;"
+        f"margin-bottom:12px;'>2000'den bugüne <b style='color:#4a9eff'>{len(hf_t_tumumu)}</b> haftalık kapanış verisi</div>",
+        unsafe_allow_html=True
+    )
+
+    hf_dl1, hf_dl2, _ = st.columns([1, 1, 4])
+    with hf_dl1:
+        csv_hf_tum = hf_t_tumumu.to_csv(index=False).encode("utf-8-sig")
+        st.download_button(
+            "⬇ Haftalık CSV (Tümü)",
+            csv_hf_tum,
+            "haftalik_tum_veri.csv",
+            "text/csv",
+            use_container_width=True,
+        )
+    with hf_dl2:
+        buf_hf = io.BytesIO()
+        with pd.ExcelWriter(buf_hf, engine="openpyxl") as w:
+            hf_t_tumumu.to_excel(w, sheet_name="Haftalik_Tum", index=False)
+            hf_t.to_excel(       w, sheet_name="Haftalik_Filtreli", index=False)
+        st.download_button(
+            "⬇ Haftalık Excel (Tümü)",
+            buf_hf.getvalue(),
+            "haftalik_tum_veri.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
+
+    # ── Genel dışa aktar ─────────────────────────────────────────────────
+    st.markdown('<div class="section-label">◈ Tüm Analizi Dışa Aktar</div>', unsafe_allow_html=True)
     dc1, dc2 = st.columns(2)
     with dc1:
         csv = top_sic.to_csv(index=False).encode("utf-8-sig")
-        st.download_button("CSV İndir", csv, "sicramalar.csv", "text/csv")
+        st.download_button("⬇ Sıçramalar CSV", csv, "sicramalar.csv", "text/csv", use_container_width=True)
     with dc2:
         buf = io.BytesIO()
         with pd.ExcelWriter(buf, engine="openpyxl") as w:
-            top_sic.to_excel(w, sheet_name="Sicramalar", index=False)
-            hf_t.to_excel(w, sheet_name="Haftalik", index=False)
-            df.to_excel(w, sheet_name="Tum_Veri", index=False)
-            aylik.to_excel(w, sheet_name="Aylik")
-            yillik.to_excel(w, sheet_name="Yillik")
+            top_sic.to_excel(    w, sheet_name="Sicramalar",        index=False)
+            hf_t_tumumu.to_excel(w, sheet_name="Haftalik_Tum",      index=False)
+            hf_t.to_excel(       w, sheet_name="Haftalik_Filtreli",  index=False)
+            df.to_excel(         w, sheet_name="Tum_Gunluk_Veri",   index=False)
+            aylik.to_excel(      w, sheet_name="Aylik")
+            yillik.to_excel(     w, sheet_name="Yillik")
             if sp_df is not None:
-                sp_df.to_excel(w, sheet_name="Spread", index=False)
-        st.download_button("Excel İndir (Tüm Analiz)", buf.getvalue(), "doviz_analiz.xlsx",
-                           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                sp_df.to_excel(  w, sheet_name="Spread",            index=False)
+        st.download_button(
+            "⬇ Excel İndir (Tüm Analiz)",
+            buf.getvalue(),
+            "doviz_analiz_tam.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
 
 st.markdown("""
 <div style="text-align:center; color:#1e2d4a; font-size:0.7rem; padding:30px 0 10px 0;
@@ -1381,4 +1516,3 @@ st.markdown("""
     TCMB EVDS · USDTRY / EURTRY ANALİZ PLATFORMU · STREAMLIT + PLOTLY
 </div>
 """, unsafe_allow_html=True)
-
