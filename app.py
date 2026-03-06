@@ -2315,28 +2315,6 @@ with tab7:
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True)
 
-    # ── Periyot seçici ────────────────────────────────────────────────────
-    st.markdown("""
-    <style>
-    .perf-scorecard {
-        background: #0d1220; border: 1px solid #1e2d4a; border-radius: 12px;
-        padding: 20px 18px; position: relative; overflow: hidden;
-    }
-    .perf-scorecard::before {
-        content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
-        background: linear-gradient(90deg, #1b6cf2, #00d4aa, #b794f4);
-    }
-    .perf-scorecard-title {
-        font-family: 'DM Mono', monospace; font-size: 0.6rem; text-transform: uppercase;
-        letter-spacing: 0.18em; color: #3a5070; margin-bottom: 14px;
-    }
-    .perf-big { font-family: 'DM Mono', monospace; font-size: 2.2rem; font-weight: 500; line-height: 1; }
-    .perf-mid { font-family: 'DM Mono', monospace; font-size: 1.1rem; font-weight: 500; }
-    .perf-sub { font-size: 0.7rem; color: #3a5070; margin-top: 6px; font-family: 'DM Mono', monospace; line-height: 1.7; }
-    .perf-badge {
-        display: inline-block; font-family: 'DM Mono', monospace; font-size: 0.65rem;
-        padding: 2px 8px; border-radius: 3px; margin-top: 8px;
-    }
 st.markdown("""
 <div style="text-align:center; color:#1e2d4a; font-size:0.7rem; padding:30px 0 10px 0;
             border-top:1px solid #0d1220; margin-top:30px;
