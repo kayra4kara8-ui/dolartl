@@ -395,22 +395,34 @@ def spread_hesapla(df_raw, doviz="USD"):
 
 
 def forward_analysis(df, threshold, periods):
-    events = df[df["Abs_Degisim"] >= threshold].copy()
+    """
+    Güvenli forward analiz: df her zaman reset_index ile kullanılır,
+    iloc ile indeks hatası oluşmaz.
+    """
+    df_r = df.reset_index(drop=True)
+    mask = df_r["Abs_Degisim"] >= threshold
+    event_positions = df_r.index[mask].tolist()
     results = {}
     for p in periods:
         changes = []
-        for idx in events.index:
-            future_idx = idx + p
-            if future_idx < len(df):
-                fwd = (df.loc[future_idx, "Dolar_Kuru"] / df.loc[idx, "Dolar_Kuru"] - 1) * 100
+        for pos in event_positions:
+            future_pos = pos + p
+            if future_pos < len(df_r):
+                fwd = (df_r.iloc[future_pos]["Dolar_Kuru"] / df_r.iloc[pos]["Dolar_Kuru"] - 1) * 100
                 changes.append(fwd)
         if changes:
             arr = np.array(changes)
             results[p] = {
-                "mean": np.mean(arr), "median": np.median(arr),
-                "pos_pct": (arr > 0).mean() * 100,
-                "p25": np.percentile(arr, 25), "p75": np.percentile(arr, 75),
-                "n": len(arr), "raw": arr.tolist()
+                "mean":    float(np.mean(arr)),
+                "median":  float(np.median(arr)),
+                "pos_pct": float((arr > 0).mean() * 100),
+                "p10":     float(np.percentile(arr, 10)),
+                "p25":     float(np.percentile(arr, 25)),
+                "p75":     float(np.percentile(arr, 75)),
+                "p90":     float(np.percentile(arr, 90)),
+                "std":     float(np.std(arr, ddof=1)),
+                "n":       int(len(arr)),
+                "raw":     arr.tolist()
             }
     return results
 
@@ -1512,6 +1524,797 @@ with tab6:
 # ════════════ TAB 7 — KÜMÜLATİF & PERFORMANS ════════════
 with tab7:
 
+    # ── CSS ───────────────────────────────────────────────────────────────
+    st.markdown("""<style>
+    .perf-scorecard {
+        background:#0d1220;border:1px solid #1e2d4a;border-radius:12px;
+        padding:20px 18px;position:relative;overflow:hidden;
+    }
+    .perf-scorecard::before {
+        content:'';position:absolute;top:0;left:0;right:0;height:2px;
+        background:linear-gradient(90deg,#1b6cf2,#00d4aa,#b794f4);
+    }
+    .perf-scorecard-title {
+        font-family:'DM Mono',monospace;font-size:0.6rem;text-transform:uppercase;
+        letter-spacing:0.18em;color:#3a5070;margin-bottom:14px;
+    }
+    .perf-big{font-family:'DM Mono',monospace;font-size:2rem;font-weight:500;line-height:1;}
+    .perf-mid{font-family:'DM Mono',monospace;font-size:1.05rem;font-weight:500;}
+    .perf-sm {font-family:'DM Mono',monospace;font-size:0.85rem;font-weight:500;}
+    .perf-sub{font-size:0.7rem;color:#3a5070;margin-top:5px;font-family:'DM Mono',monospace;line-height:1.7;}
+    .perf-badge{display:inline-block;font-family:'DM Mono',monospace;font-size:0.62rem;
+        padding:2px 8px;border-radius:3px;margin-top:8px;}
+    .perf-badge-pos{background:rgba(0,212,170,0.1);color:#00d4aa;border:1px solid rgba(0,212,170,0.25);}
+    .perf-badge-neg{background:rgba(255,77,106,0.1);color:#ff4d6a;border:1px solid rgba(255,77,106,0.25);}
+    .perf-badge-neu{background:rgba(74,158,255,0.1);color:#4a9eff;border:1px solid rgba(74,158,255,0.25);}
+    .perf-divider{border:none;border-top:1px solid #1e2d4a;margin:9px 0;}
+    .perf-row{display:flex;justify-content:space-between;align-items:center;margin:4px 0;}
+    .perf-row-label{font-family:'DM Mono',monospace;font-size:0.63rem;color:#4a6080;}
+    .perf-row-val  {font-family:'DM Mono',monospace;font-size:0.72rem;color:#c9d4e8;}
+    .streak-box{background:#0d1220;border:1px solid #1e2d4a;border-radius:8px;padding:14px 16px;margin-bottom:10px;}
+    .regime-high{background:rgba(255,77,106,0.07);border:1px solid rgba(255,77,106,0.2);}
+    .regime-low {background:rgba(0,212,170,0.07);border:1px solid rgba(0,212,170,0.2);}
+    </style>""", unsafe_allow_html=True)
+
+    # ── Periyot seçici ────────────────────────────────────────────────────
+    st.markdown('<div class="section-label">◈ Periyot & Frekans Seçimi</div>', unsafe_allow_html=True)
+    sel_c1, sel_c2, sel_c3 = st.columns([2, 2, 3])
+    with sel_c1:
+        frekans = st.selectbox("Frekans",
+            ["Günlük","Haftalık","Aylık","Çeyreklik","Yıllık"], index=1, key="cum_frekans")
+    with sel_c2:
+        bas_yil = int(df["Tarih"].min().year)
+        bit_yil = int(df["Tarih"].max().year)
+        yil_aralik = st.select_slider("Yıl Aralığı",
+            options=list(range(bas_yil, bit_yil+1)),
+            value=(bas_yil, bit_yil), key="cum_yil")
+    with sel_c3:
+        grafik_katmanlar = st.multiselect("Kümülatif Grafik Katmanları",
+            ["Kümülatif Değişim %","Yuvarlanmalı Ort.","Volatilite Bandı"],
+            default=["Kümülatif Değişim %","Yuvarlanmalı Ort."], key="cum_layers")
+
+    # ── Frekans çarpanları (yıllıklaştırma için) ─────────────────────────
+    ANNUALIZE = {"Günlük":252, "Haftalık":52, "Aylık":12, "Çeyreklik":4, "Yıllık":1}
+    ann_factor = ANNUALIZE[frekans]
+
+    # ── Periyot verisini hazırla ──────────────────────────────────────────
+    df_cum = df[(df["Yil"] >= yil_aralik[0]) & (df["Yil"] <= yil_aralik[1])].copy()
+
+    if frekans == "Günlük":
+        periyot_df = df_cum[["Tarih","Dolar_Kuru","Yuzde_Degisim","Yil"]].copy()
+        periyot_df.columns = ["Tarih","Kur","Degisim","Yil"]
+        x_fmt, adet_label = "%b %Y", "Günlük Gözlem"
+
+    elif frekans == "Haftalık":
+        hf_c = hf_global[
+            (hf_global["PztTarih"].dt.year >= yil_aralik[0]) &
+            (hf_global["PztTarih"].dt.year <= yil_aralik[1])].copy()
+        periyot_df = pd.DataFrame({
+            "Tarih":   hf_c["CumTarih"].values,
+            "Kur":     hf_c["CumKur"].values,
+            "Degisim": hf_c["HaftaDegisim"].values,
+            "Yil":     hf_c["CumTarih"].dt.year.values,
+        })
+        x_fmt, adet_label = "%b %Y", "Haftalık Gözlem"
+
+    elif frekans == "Aylık":
+        ay_g = df_cum.groupby(["Yil","Ay"]).agg(
+            Tarih=("Tarih","last"), Kur=("Dolar_Kuru","last"),
+            IlkKur=("Dolar_Kuru","first")).reset_index()
+        ay_g["Degisim"] = (ay_g["Kur"] / ay_g["IlkKur"] - 1) * 100
+        periyot_df = ay_g[["Tarih","Kur","Degisim","Yil"]].copy()
+        x_fmt, adet_label = "%Y", "Aylık Gözlem"
+
+    elif frekans == "Çeyreklik":
+        df_cum["Ceyrek"] = df_cum["Tarih"].dt.quarter
+        cey_g = df_cum.groupby(["Yil","Ceyrek"]).agg(
+            Tarih=("Tarih","last"), Kur=("Dolar_Kuru","last"),
+            IlkKur=("Dolar_Kuru","first")).reset_index()
+        cey_g["Degisim"] = (cey_g["Kur"] / cey_g["IlkKur"] - 1) * 100
+        periyot_df = cey_g[["Tarih","Kur","Degisim","Yil"]].copy()
+        x_fmt, adet_label = "%Y", "Çeyreklik Gözlem"
+
+    else:  # Yıllık
+        yil_g = df_cum.groupby("Yil").agg(
+            Tarih=("Tarih","last"), Kur=("Dolar_Kuru","last"),
+            IlkKur=("Dolar_Kuru","first")).reset_index()
+        yil_g["Degisim"] = (yil_g["Kur"] / yil_g["IlkKur"] - 1) * 100
+        periyot_df = yil_g[["Tarih","Kur","Degisim","Yil"]].copy()
+        x_fmt, adet_label = "%Y", "Yıllık Gözlem"
+
+    periyot_df = periyot_df.sort_values("Tarih").reset_index(drop=True)
+
+    # ── DOĞRU METRİKLER ──────────────────────────────────────────────────
+    # Kümülatif: bileşik (kur bazlı), basit toplam değil
+    kur0 = periyot_df["Kur"].iloc[0]
+    periyot_df["Kumülatif"] = (periyot_df["Kur"] / kur0 - 1) * 100
+
+    # Drawdown: kümülatifin running max'ından sapma
+    rolling_max = periyot_df["Kumülatif"].cummax()
+    periyot_df["Drawdown"] = periyot_df["Kumülatif"] - rolling_max  # ≤ 0
+
+    # MA penceresi: gözlem sayısına göre adaptif
+    ma_win = min(20, max(3, len(periyot_df)//10))
+    periyot_df["MA"] = periyot_df["Kumülatif"].rolling(ma_win).mean()
+
+    # Volatilite bandı: periyot getirisi std'si üzerinden
+    periyot_df["Vol"] = periyot_df["Degisim"].rolling(ma_win).std()
+    periyot_df["Band_ust"] = periyot_df["Kumülatif"] + periyot_df["Vol"] * 2
+    periyot_df["Band_alt"] = periyot_df["Kumülatif"] - periyot_df["Vol"] * 2
+
+    # Temel istatistikler
+    n            = len(periyot_df)
+    r            = periyot_df["Degisim"].dropna()
+    ort          = r.mean()                         # periyot ort getiri
+    std          = r.std(ddof=1)                    # periyot std sapma
+    toplam_get   = periyot_df["Kumülatif"].iloc[-1] # bileşik toplam %
+    max_dd       = periyot_df["Drawdown"].min()     # maks drawdown (≤0)
+    poz          = int((r > 0).sum())
+    neg          = int((r < 0).sum())
+    poz_oran     = poz / n * 100 if n > 0 else 0
+
+    # CAGR — bileşik yıllık büyüme oranı
+    n_yil = (periyot_df["Tarih"].iloc[-1] - periyot_df["Tarih"].iloc[0]).days / 365.25
+    kur_son = periyot_df["Kur"].iloc[-1]
+    cagr = ((kur_son / kur0) ** (1 / max(n_yil, 0.01)) - 1) * 100 if n_yil > 0 else 0.0
+
+    # Annualized Sharpe — risk-free = 0 kabul (TL kuru analizi için standart)
+    ann_ort = ort * ann_factor
+    ann_std = std * (ann_factor ** 0.5)
+    sharpe  = ann_ort / ann_std if ann_std > 0 else 0.0
+
+    # Sortino — sadece negatif sapmaları kullan
+    neg_r   = r[r < 0]
+    downside_std = neg_r.std(ddof=1) * (ann_factor ** 0.5) if len(neg_r) > 1 else 1e-9
+    sortino = ann_ort / downside_std if downside_std > 0 else 0.0
+
+    # Calmar Ratio — CAGR / |Max Drawdown|
+    calmar = cagr / abs(max_dd) if abs(max_dd) > 0.001 else 0.0
+
+    # Percentile rank — son değişimin tüm tarihsel dağılımdaki yeri
+    son_degisim = periyot_df["Degisim"].iloc[-1]
+    pct_rank    = float((r <= son_degisim).mean() * 100)
+
+    # Streak analizi — üst üste pozitif/negatif periyot serileri
+    def _streak_analiz(seri):
+        streaks_pos, streaks_neg = [], []
+        cur_val, cur_len = None, 0
+        for v in seri:
+            sign = 1 if v > 0 else (-1 if v < 0 else 0)
+            if sign == cur_val:
+                cur_len += 1
+            else:
+                if cur_val == 1:  streaks_pos.append(cur_len)
+                if cur_val == -1: streaks_neg.append(cur_len)
+                cur_val, cur_len = sign, 1
+        if cur_val == 1:  streaks_pos.append(cur_len)
+        if cur_val == -1: streaks_neg.append(cur_len)
+        return (max(streaks_pos) if streaks_pos else 0,
+                max(streaks_neg) if streaks_neg else 0,
+                streaks_pos, streaks_neg)
+
+    max_pos_streak, max_neg_streak, all_pos_str, all_neg_str = _streak_analiz(r.values)
+    avg_pos_streak = np.mean(all_pos_str) if all_pos_str else 0
+    avg_neg_streak = np.mean(all_neg_str) if all_neg_str else 0
+
+    # Mevsimsellik — ay bazlı ortalama getiri (tüm yılların ortalaması)
+    if frekans in ["Günlük","Haftalık","Aylık"]:
+        df_mevs = df_cum.copy()
+        mevs = df_mevs.groupby("Ay")["Yuzde_Degisim"].mean()
+    else:
+        mevs = pd.Series(dtype=float)
+
+    # Regime detection — 20 periyotluk vol üzerinden yüksek/düşük rejim
+    periyot_df["Vol20"] = periyot_df["Degisim"].rolling(20, min_periods=5).std()
+    vol_median = periyot_df["Vol20"].median()
+    periyot_df["Rejim"] = periyot_df["Vol20"].apply(
+        lambda x: "Yüksek Vol" if (pd.notna(x) and x > vol_median) else "Düşük Vol")
+
+    # USD–EUR korelasyon (spread_hesapla zaten çekti, ham veri üzerinden)
+    usd_d = veri_isle_api(df_raw, "USD", tur_sec)
+    eur_d = veri_isle_api(df_raw, "EUR", tur_sec)
+    if usd_d is not None and eur_d is not None:
+        kor_df = pd.merge(
+            usd_d[["Tarih","Yuzde_Degisim"]].rename(columns={"Yuzde_Degisim":"USD"}),
+            eur_d[["Tarih","Yuzde_Degisim"]].rename(columns={"Yuzde_Degisim":"EUR"}),
+            on="Tarih", how="inner"
+        ).dropna()
+        kor_global = kor_df["USD"].corr(kor_df["EUR"])
+        kor_rolling = kor_df.set_index("Tarih")[["USD","EUR"]].rolling(60).corr().unstack()["USD"]["EUR"].reset_index()
+        kor_rolling.columns = ["Tarih","Korelasyon"]
+    else:
+        kor_global = None
+        kor_rolling = None
+
+    # ── Formatlar ─────────────────────────────────────────────────────────
+    ilk_kur_s = fkur(kur0)
+    son_kur_s = fkur(kur_son)
+    tarih_bas = periyot_df["Tarih"].iloc[0].strftime("%d.%m.%Y")
+    tarih_son = periyot_df["Tarih"].iloc[-1].strftime("%d.%m.%Y")
+    s_ = lambda v: "+" if v >= 0 else ""
+    f2 = lambda v: f'{v:.2f}'.replace('.',',')
+    f3 = lambda v: f'{v:.3f}'.replace('.',',')
+    f1 = lambda v: f'{v:.1f}'.replace('.',',')
+
+    # ════ SCORECARD SATIRI 1 — 5 kart ═════════════════════════════════════
+    st.markdown('<div class="section-label">◈ Performans Özeti</div>', unsafe_allow_html=True)
+    sc1,sc2,sc3,sc4,sc5 = st.columns(5)
+
+    with sc1:
+        cagr_c = "#00d4aa" if cagr>=0 else "#ff4d6a"
+        st.markdown(f"""<div class="perf-scorecard">
+        <div class="perf-scorecard-title">◈ Kümülatif Getiri</div>
+        <div class="perf-big" style="color:{'#00d4aa' if toplam_get>=0 else '#ff4d6a'}">
+            {s_(toplam_get)}{f1(toplam_get)}%</div>
+        <div class="perf-sub">Bileşik · {tarih_bas} – {tarih_son}<br>
+            {ilk_kur_s} → {son_kur_s} ₺</div>
+        <hr class="perf-divider">
+        <div class="perf-row">
+            <span class="perf-row-label">CAGR</span>
+            <span class="perf-row-val" style="color:{cagr_c}">{s_(cagr)}{f2(cagr)}%</span>
+        </div>
+        <div class="perf-row">
+            <span class="perf-row-label">Süre</span>
+            <span class="perf-row-val">{n_yil:.1f} yıl</span>
+        </div>
+        <span class="perf-badge {'perf-badge-pos' if toplam_get>=0 else 'perf-badge-neg'}">
+            {frekans} · {n} gözlem</span>
+        </div>""", unsafe_allow_html=True)
+
+    with sc2:
+        st.markdown(f"""<div class="perf-scorecard">
+        <div class="perf-scorecard-title">◈ Dağılım</div>
+        <div style="display:flex;gap:10px;align-items:flex-end;margin-bottom:6px;">
+            <div><div style="font-family:'DM Mono',monospace;font-size:0.58rem;color:#3a5070;margin-bottom:3px;">POZİTİF</div>
+                <div class="perf-big" style="color:#00d4aa;font-size:1.7rem;">{poz}</div></div>
+            <div style="color:#1e2d4a;font-size:1.3rem;padding-bottom:2px;">/</div>
+            <div><div style="font-family:'DM Mono',monospace;font-size:0.58rem;color:#3a5070;margin-bottom:3px;">NEGATİF</div>
+                <div class="perf-big" style="color:#ff4d6a;font-size:1.7rem;">{neg}</div></div>
+        </div>
+        <div class="perf-sub">{adet_label} · Toplam {n}</div>
+        <div style="margin-top:9px;background:#131c2e;border-radius:4px;height:6px;overflow:hidden;">
+            <div style="width:{min(poz_oran,100):.1f}%;background:linear-gradient(90deg,#00d4aa,#1b6cf2);height:100%;"></div>
+        </div>
+        <div class="perf-sub" style="margin-top:4px;">Pozitif oran: %{f1(poz_oran)}</div>
+        <hr class="perf-divider">
+        <div class="perf-row">
+            <span class="perf-row-label">Son Değişim</span>
+            <span class="perf-row-val" style="color:{'#00d4aa' if son_degisim>=0 else '#ff4d6a'}">{s_(son_degisim)}{f2(son_degisim)}%</span>
+        </div>
+        <div class="perf-row">
+            <span class="perf-row-label">Pct. Rank</span>
+            <span class="perf-row-val">%{f1(pct_rank)}</span>
+        </div>
+        </div>""", unsafe_allow_html=True)
+
+    with sc3:
+        st.markdown(f"""<div class="perf-scorecard">
+        <div class="perf-scorecard-title">◈ Getiri İstatistikleri</div>
+        <div class="perf-mid" style="color:{'#00d4aa' if ort>=0 else '#ff4d6a'}">
+            {s_(ort)}{f3(ort)}%</div>
+        <div class="perf-sub">Ort. {frekans.lower()} değişim</div>
+        <hr class="perf-divider">
+        <div class="perf-row">
+            <span class="perf-row-label">Std Sapma ({frekans[:3]})</span>
+            <span class="perf-row-val">±{f3(std)}%</span>
+        </div>
+        <div class="perf-row">
+            <span class="perf-row-label">Yıllık Std</span>
+            <span class="perf-row-val">±{f3(ann_std)}%</span>
+        </div>
+        <div class="perf-row">
+            <span class="perf-row-label">En İyi</span>
+            <span class="perf-row-val" style="color:#00d4aa">+{f2(r.max())}%</span>
+        </div>
+        <div class="perf-row">
+            <span class="perf-row-label">En Kötü</span>
+            <span class="perf-row-val" style="color:#ff4d6a">{f2(r.min())}%</span>
+        </div>
+        <div class="perf-row">
+            <span class="perf-row-label">Çarpıklık</span>
+            <span class="perf-row-val">{f2(float(r.skew()))}</span>
+        </div>
+        <div class="perf-row">
+            <span class="perf-row-label">Basıklık</span>
+            <span class="perf-row-val">{f2(float(r.kurtosis()))}</span>
+        </div>
+        </div>""", unsafe_allow_html=True)
+
+    with sc4:
+        sh_c  = "#00d4aa" if sharpe>0  else "#ff4d6a"
+        so_c  = "#00d4aa" if sortino>0 else "#ff4d6a"
+        ca_c  = "#00d4aa" if calmar>0  else "#ff4d6a"
+        st.markdown(f"""<div class="perf-scorecard">
+        <div class="perf-scorecard-title">◈ Risk Oranları</div>
+        <div class="perf-row" style="margin-bottom:6px;">
+            <span class="perf-row-label">Sharpe (yıllık, rf=0)</span>
+            <span class="perf-row-val" style="color:{sh_c};font-size:0.85rem;">{f2(sharpe)}</span>
+        </div>
+        <div class="perf-row">
+            <span class="perf-row-label">Sortino</span>
+            <span class="perf-row-val" style="color:{so_c}">{f2(sortino)}</span>
+        </div>
+        <div class="perf-row">
+            <span class="perf-row-label">Calmar</span>
+            <span class="perf-row-val" style="color:{ca_c}">{f2(calmar)}</span>
+        </div>
+        <hr class="perf-divider">
+        <div class="perf-row">
+            <span class="perf-row-label">Max Drawdown</span>
+            <span class="perf-row-val" style="color:#ff4d6a">{f2(max_dd)}%</span>
+        </div>
+        <div class="perf-row">
+            <span class="perf-row-label">Downside Std</span>
+            <span class="perf-row-val">±{f2(downside_std)}%</span>
+        </div>
+        <div class="perf-row">
+            <span class="perf-row-label">VaR %95 (hist.)</span>
+            <span class="perf-row-val" style="color:#f6ad55">{f2(float(np.percentile(r,5)))}%</span>
+        </div>
+        <div class="perf-row">
+            <span class="perf-row-label">CVaR %95</span>
+            <span class="perf-row-val" style="color:#f6ad55">{f2(float(r[r <= np.percentile(r,5)].mean()))}%</span>
+        </div>
+        </div>""", unsafe_allow_html=True)
+
+    with sc5:
+        yil_perf_sc = periyot_df.groupby("Yil")["Degisim"].agg(ort="mean", adet="count").reset_index()
+        en_iyi  = yil_perf_sc.loc[yil_perf_sc["ort"].idxmax()]
+        en_kotu = yil_perf_sc.loc[yil_perf_sc["ort"].idxmin()]
+        st.markdown(f"""<div class="perf-scorecard">
+        <div class="perf-scorecard-title">◈ Streak & Ekstremler</div>
+        <div class="perf-row">
+            <span class="perf-row-label">Max Poz. Seri</span>
+            <span class="perf-row-val" style="color:#00d4aa">{max_pos_streak} {frekans[:3]}</span>
+        </div>
+        <div class="perf-row">
+            <span class="perf-row-label">Max Neg. Seri</span>
+            <span class="perf-row-val" style="color:#ff4d6a">{max_neg_streak} {frekans[:3]}</span>
+        </div>
+        <div class="perf-row">
+            <span class="perf-row-label">Ort. Poz. Seri</span>
+            <span class="perf-row-val">{avg_pos_streak:.1f}</span>
+        </div>
+        <div class="perf-row">
+            <span class="perf-row-label">Ort. Neg. Seri</span>
+            <span class="perf-row-val">{avg_neg_streak:.1f}</span>
+        </div>
+        <hr class="perf-divider">
+        <div class="perf-row">
+            <span class="perf-row-label">En İyi Yıl</span>
+            <span class="perf-row-val" style="color:#00d4aa">{int(en_iyi['Yil'])} (+{f2(en_iyi['ort'])}%)</span>
+        </div>
+        <div class="perf-row">
+            <span class="perf-row-label">En Kötü Yıl</span>
+            <span class="perf-row-val" style="color:#ff4d6a">{int(en_kotu['Yil'])} ({f2(en_kotu['ort'])}%)</span>
+        </div>
+        <div class="perf-row">
+            <span class="perf-row-label">{'USD-EUR Kor.' if kor_global is not None else ''}</span>
+            <span class="perf-row-val" style="color:#b794f4">{f2(kor_global) if kor_global is not None else '—'}</span>
+        </div>
+        </div>""", unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ════ GRAFİK 1 — Kümülatif + Drawdown (subplots) ══════════════════════
+    st.markdown(
+        f'<div class="section-label">◈ Kümülatif Getiri & Drawdown — {frekans} '
+        f'<span style="color:#4a9eff;font-size:0.8rem;font-weight:400;">'
+        f'· {yil_aralik[0]}–{yil_aralik[1]} · {n} gözlem · CAGR {s_(cagr)}{f2(cagr)}%</span></div>',
+        unsafe_allow_html=True)
+
+    fig_cum = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                            row_heights=[0.68, 0.32], vertical_spacing=0.04)
+
+    if "Volatilite Bandı" in grafik_katmanlar:
+        xb = pd.concat([periyot_df["Tarih"], periyot_df["Tarih"][::-1]]).reset_index(drop=True)
+        yb = pd.concat([periyot_df["Band_ust"], periyot_df["Band_alt"][::-1]]).reset_index(drop=True)
+        fig_cum.add_trace(go.Scatter(
+            x=xb, y=yb, fill="toself",
+            fillcolor="rgba(74,158,255,0.05)",
+            line=dict(color="rgba(0,0,0,0)"),
+            name="Vol Bandı ±2σ", hoverinfo="skip"), row=1, col=1)
+
+    if "Kümülatif Değişim %" in grafik_katmanlar:
+        fig_cum.add_trace(go.Scatter(
+            x=periyot_df["Tarih"], y=periyot_df["Kumülatif"],
+            mode="lines", name="Kümülatif %",
+            line=dict(color="#4a9eff", width=2),
+            fill="tozeroy", fillcolor="rgba(74,158,255,0.06)",
+            customdata=list(zip(
+                periyot_df["Kur"].apply(tr_fmt_kur),
+                periyot_df["Degisim"].apply(lambda x: tr_fmt_pct(x,2)),
+                periyot_df["Kumülatif"].apply(lambda x: tr_fmt_pct(x,2))
+            )),
+            hovertemplate="<b>%{x|%d.%m.%Y}</b><br>Kur: %{customdata[0]} ₺<br>"
+                          f"{frekans} Δ: <b>%{{customdata[1]}}</b><br>"
+                          "Kümülatif: <b>%{customdata[2]}</b><extra></extra>"),
+            row=1, col=1)
+
+    if "Yuvarlanmalı Ort." in grafik_katmanlar:
+        fig_cum.add_trace(go.Scatter(
+            x=periyot_df["Tarih"], y=periyot_df["MA"],
+            mode="lines", name=f"MA{ma_win}",
+            line=dict(color="#f6ad55", width=1.4, dash="dot"),
+            hovertemplate="%{x|%d.%m.%Y}<br>MA: <b>%{y:.2f}%</b><extra></extra>"),
+            row=1, col=1)
+
+    # Drawdown alanı
+    fig_cum.add_trace(go.Scatter(
+        x=periyot_df["Tarih"], y=periyot_df["Drawdown"],
+        mode="lines", name="Drawdown",
+        line=dict(color="#ff4d6a", width=1),
+        fill="tozeroy", fillcolor="rgba(255,77,106,0.12)",
+        hovertemplate="%{x|%d.%m.%Y}<br>Drawdown: <b>%{y:.2f}%</b><extra></extra>"),
+        row=2, col=1)
+
+    fig_cum.add_hline(y=0, line_color="#2a4a7a", line_width=1, row=1, col=1)
+    fig_cum.add_hline(y=0, line_color="#2a4a7a", line_width=1, row=2, col=1)
+
+    fig_cum.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(13,18,32,0.9)",
+        font=dict(color="#c9d4e8", family="DM Sans, sans-serif"), height=560,
+        title=dict(text=f"KÜMÜLATİF & DRAWDOWN — {doviz_label} — {frekans.upper()}",
+                   font=dict(size=11, color="#4a6080", family="DM Mono, monospace"), x=0),
+        legend={**LEGEND_RIGHT}, margin=dict(l=50,r=120,t=50,b=40),
+        hoverlabel=dict(bgcolor="#0d1220", font_size=12, font_color="#e8f0ff"),
+        xaxis2=dict(gridcolor="#131c2e", tickformat=x_fmt, tickfont=dict(size=10,color="#4a6080")),
+        xaxis=dict(gridcolor="#131c2e", tickfont=dict(size=10,color="#4a6080")),
+        yaxis=dict(gridcolor="#131c2e", ticksuffix="%", tickfont=dict(size=10,color="#4a6080")),
+        yaxis2=dict(gridcolor="#131c2e", ticksuffix="%", tickfont=dict(size=10,color="#4a6080")),
+        hovermode="x unified"
+    )
+    st.plotly_chart(fig_cum, use_container_width=True)
+
+    # ════ GRAFİK 2 — Bar + Yıl bazlı matris ══════════════════════════════
+    col_g2a, col_g2b = st.columns([3, 2])
+
+    with col_g2a:
+        st.markdown(f'<div class="section-label">◈ {frekans} Değişim — Bar</div>', unsafe_allow_html=True)
+        periyot_df["_rc"] = periyot_df["Degisim"].apply(lambda x: "#00d4aa" if x>=0 else "#ff4d6a")
+        fig_bar = go.Figure(go.Bar(
+            x=periyot_df["Tarih"], y=periyot_df["Degisim"],
+            marker_color=periyot_df["_rc"].values, marker_line_width=0, opacity=0.85,
+            customdata=list(zip(
+                periyot_df["Degisim"].apply(lambda x: tr_fmt_pct(x,2)),
+                periyot_df["Kur"].apply(tr_fmt_kur),
+                periyot_df["Kumülatif"].apply(lambda x: tr_fmt_pct(x,2))
+            )),
+            hovertemplate="<b>%{x|%d.%m.%Y}</b><br>"
+                          f"{frekans} Δ: <b>%{{customdata[0]}}</b><br>"
+                          "Kur: %{customdata[1]} ₺<br>"
+                          "Kümülatif: %{customdata[2]}<extra></extra>"
+        ))
+        fig_bar.add_hline(y=0, line_color="#2a4a7a", line_width=1)
+        tv_b, tt_b = safe_ticks(periyot_df["Degisim"].min(), periyot_df["Degisim"].max(), n=8, decimals=1, suffix="%")
+        apply_base(fig_bar, height=340,
+            title=dict(text=f"{frekans.upper()} DEĞİŞİM",
+                       font=dict(size=11, color="#4a6080", family="DM Mono, monospace"), x=0),
+            xaxis=dict(gridcolor="#131c2e", tickformat=x_fmt, tickfont=dict(size=10,color="#4a6080")),
+            yaxis={**yt(tv_b, tt_b, {"gridcolor":"#131c2e","tickfont":dict(size=10,color="#4a6080")})},
+            showlegend=False, hovermode="closest")
+        st.plotly_chart(fig_bar, use_container_width=True)
+
+    with col_g2b:
+        st.markdown('<div class="section-label">◈ Yıl Bazlı Kartlar</div>', unsafe_allow_html=True)
+        yil_perf_full = periyot_df.groupby("Yil").agg(
+            Adet=("Degisim","count"), Ort_Pct=("Degisim","mean"),
+            En_Iyi=("Degisim","max"), En_Kotu=("Degisim","min"),
+            Std=("Degisim","std"),
+            Poz_Adet=("Degisim", lambda x: (x>0).sum()),
+        ).reset_index()
+        yil_perf_full["Poz_Oran"] = (yil_perf_full["Poz_Adet"]/yil_perf_full["Adet"]*100).round(1)
+
+        for _, yr in yil_perf_full.sort_values("Yil", ascending=False).iterrows():
+            ort_c = "#00d4aa" if yr["Ort_Pct"]>=0 else "#ff4d6a"
+            sign  = "+" if yr["Ort_Pct"]>=0 else ""
+            st.markdown(f"""
+            <div style="background:#0d1220;border:1px solid #1e2d4a;border-left:3px solid {ort_c};
+                        border-radius:6px;padding:10px 12px;margin-bottom:7px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <span style="font-family:'DM Mono',monospace;font-size:0.78rem;color:#c9d4e8;font-weight:500;">{int(yr['Yil'])}</span>
+                    <span style="font-family:'DM Mono',monospace;font-size:0.85rem;color:{ort_c};font-weight:500;">{sign}{f2(yr['Ort_Pct'])}%</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;margin-top:4px;">
+                    <span style="font-family:'DM Mono',monospace;font-size:0.6rem;color:#3a5070;">{int(yr['Adet'])} gözlem · %{yr['Poz_Oran']:.0f} poz</span>
+                    <span style="font-family:'DM Mono',monospace;font-size:0.6rem;color:#3a5070;">±{f2(yr['Std'])}%</span>
+                </div>
+                <div style="margin-top:5px;background:#131c2e;border-radius:3px;height:3px;overflow:hidden;">
+                    <div style="width:{yr['Poz_Oran']:.1f}%;background:{ort_c};height:100%;opacity:0.7;"></div>
+                </div>
+            </div>""", unsafe_allow_html=True)
+
+    # ════ GRAFİK 3 — Yıl Üstüne Yıl ════════════════════════════════════
+    st.markdown('<div class="section-label">◈ Yıl İçi Kümülatif — Yıl Üstüne Yıl</div>', unsafe_allow_html=True)
+    YILLAR = sorted(periyot_df["Yil"].unique())
+    YCOLOR = ["#4a9eff","#00d4aa","#f6ad55","#b794f4","#ff4d6a",
+              "#60a5fa","#34d399","#fbbf24","#a78bfa","#fb7185",
+              "#38bdf8","#4ade80","#facc15","#c084fc","#f43f5e"]
+    fig_yoy = go.Figure()
+    for i, yil in enumerate(YILLAR):
+        sub = periyot_df[periyot_df["Yil"]==yil].copy().reset_index(drop=True)
+        if len(sub)<2: continue
+        sub["YilKum"] = (sub["Kur"] / sub["Kur"].iloc[0] - 1) * 100
+        color = YCOLOR[i % len(YCOLOR)]
+        fig_yoy.add_trace(go.Scatter(
+            x=sub.index, y=sub["YilKum"], mode="lines", name=str(yil),
+            line=dict(color=color, width=1.5), opacity=0.85,
+            customdata=list(zip(
+                sub["Tarih"].dt.strftime("%d.%m.%Y"),
+                sub["Kur"].apply(tr_fmt_kur),
+                sub["YilKum"].apply(lambda x: tr_fmt_pct(x,2))
+            )),
+            hovertemplate=f"<b>{yil}</b> — %{{customdata[0]}}<br>"
+                          "Kur: %{customdata[1]} ₺<br>"
+                          "Yıl içi kümülatif: <b>%{customdata[2]}</b><extra></extra>"
+        ))
+    fig_yoy.add_hline(y=0, line_color="#2a4a7a", line_width=1, line_dash="dash")
+    apply_base(fig_yoy, height=460,
+        title=dict(text=f"YIL İÇİ KÜMÜLATİF ({frekans.upper()}) — YIL ÜZERİNE YIL",
+                   font=dict(size=11,color="#4a6080",family="DM Mono, monospace"), x=0),
+        xaxis=dict(gridcolor="#131c2e", title=dict(text=f"{frekans} sırası",font=dict(size=10,color="#4a6080")),
+                   tickfont=dict(size=10,color="#4a6080")),
+        yaxis=dict(gridcolor="#131c2e", ticksuffix="%", tickfont=dict(size=10,color="#4a6080")),
+        hovermode="closest",
+        legend=dict(bgcolor="rgba(13,18,32,0.9)",bordercolor="#1e2d4a",borderwidth=1,
+                    font=dict(size=10),orientation="v",x=1.01,xanchor="left",y=0.5,yanchor="middle"))
+    st.plotly_chart(fig_yoy, use_container_width=True)
+
+    # ════ GRAFİK 4 — Mevsimsellik ═════════════════════════════════════════
+    if len(mevs) > 0:
+        st.markdown('<div class="section-label">◈ Mevsimsellik — Ay Bazlı Ortalama Günlük Getiri</div>', unsafe_allow_html=True)
+        ay_ort_genel = df_cum["Yuzde_Degisim"].mean()
+        mevs_df = mevs.reset_index()
+        mevs_df.columns = ["Ay","OrtGetiri"]
+        mevs_df["AyAdi"] = mevs_df["Ay"].map(TR_AY_UZUN)
+        mevs_df["FarkGenel"] = mevs_df["OrtGetiri"] - ay_ort_genel
+        mevs_df["_renk"] = mevs_df["FarkGenel"].apply(lambda x: "#00d4aa" if x>=0 else "#ff4d6a")
+        mevs_df["_ort_s"] = mevs_df["OrtGetiri"].apply(lambda x: tr_fmt_pct(x,3))
+        mevs_df["_fark_s"] = mevs_df["FarkGenel"].apply(lambda x: tr_fmt_pct(x,3))
+
+        fig_mevs = go.Figure()
+        fig_mevs.add_trace(go.Bar(
+            x=mevs_df["AyAdi"], y=mevs_df["OrtGetiri"],
+            marker_color=mevs_df["_renk"].values, marker_line_width=0, opacity=0.85,
+            customdata=list(zip(mevs_df["_ort_s"], mevs_df["_fark_s"])),
+            hovertemplate="<b>%{x}</b><br>Ort. günlük: <b>%{customdata[0]}</b><br>"
+                          "Genel ort. farkı: <b>%{customdata[1]}</b><extra></extra>"
+        ))
+        fig_mevs.add_hline(y=ay_ort_genel, line_dash="dash", line_color="#f6ad55", line_width=1.5,
+                           annotation_text=f"Genel ort. {tr_fmt_pct(ay_ort_genel,3)}",
+                           annotation_font_color="#f6ad55", annotation_font_size=10)
+        fig_mevs.add_hline(y=0, line_color="#2a4a7a", line_width=1)
+        tv_m, tt_m = safe_ticks(mevs_df["OrtGetiri"].min(), mevs_df["OrtGetiri"].max(), n=8, decimals=3, suffix="%")
+        apply_base(fig_mevs, height=360,
+            title=dict(text="MEVSİMSELLİK — AY BAZLI ORT. GÜNLÜK GETİRİ",
+                       font=dict(size=11,color="#4a6080",family="DM Mono, monospace"), x=0),
+            xaxis=dict(gridcolor="#131c2e", tickfont=dict(size=10,color="#4a6080")),
+            yaxis={**yt(tv_m, tt_m, {"gridcolor":"#131c2e","tickfont":dict(size=10,color="#4a6080")})},
+            showlegend=False, hovermode="closest")
+        st.plotly_chart(fig_mevs, use_container_width=True)
+
+    # ════ GRAFİK 5 — Regime Detection ════════════════════════════════════
+    st.markdown('<div class="section-label">◈ Volatilite Rejimi — Yüksek / Düşük</div>', unsafe_allow_html=True)
+
+    periyot_nona = periyot_df.dropna(subset=["Vol20"]).copy()
+    regime_high = periyot_nona[periyot_nona["Rejim"]=="Yüksek Vol"]
+    regime_low  = periyot_nona[periyot_nona["Rejim"]=="Düşük Vol"]
+
+    fig_reg = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                            row_heights=[0.6,0.4], vertical_spacing=0.04)
+
+    # Kur çizgisi + rejim renkleri
+    fig_reg.add_trace(go.Scatter(
+        x=periyot_df["Tarih"], y=periyot_df["Kur"],
+        mode="lines", name="Kur",
+        line=dict(color="#2a4a7a", width=1.5),
+        hovertemplate="%{x|%d.%m.%Y}<br>Kur: <b>%{y:.4f} ₺</b><extra></extra>"),
+        row=1, col=1)
+
+    # Yüksek vol bölgelerini şerit olarak göster
+    in_high = False
+    x_start = None
+    for _, row_r in periyot_nona.iterrows():
+        if row_r["Rejim"]=="Yüksek Vol" and not in_high:
+            x_start = row_r["Tarih"]; in_high=True
+        elif row_r["Rejim"]!="Yüksek Vol" and in_high:
+            fig_reg.add_vrect(x0=x_start, x1=row_r["Tarih"],
+                fillcolor="rgba(255,77,106,0.07)", layer="below", line_width=0, row=1, col=1)
+            in_high=False
+    if in_high and x_start is not None:
+        fig_reg.add_vrect(x0=x_start, x1=periyot_nona["Tarih"].iloc[-1],
+            fillcolor="rgba(255,77,106,0.07)", layer="below", line_width=0, row=1, col=1)
+
+    # Volatilite çizgisi
+    fig_reg.add_trace(go.Scatter(
+        x=periyot_nona["Tarih"], y=periyot_nona["Vol20"],
+        mode="lines", name=f"Vol (20 periyot)",
+        line=dict(color="#b794f4", width=1.5),
+        hovertemplate="%{x|%d.%m.%Y}<br>Vol: <b>%{y:.3f}%</b><extra></extra>"),
+        row=2, col=1)
+    fig_reg.add_hline(y=float(vol_median), line_dash="dash",
+                      line_color="#f6ad55", line_width=1.2,
+                      annotation_text=f"Medyan {float(vol_median):.3f}%",
+                      annotation_font_color="#f6ad55", annotation_font_size=9, row=2, col=1)
+
+    fig_reg.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(13,18,32,0.9)",
+        font=dict(color="#c9d4e8",family="DM Sans, sans-serif"), height=520,
+        title=dict(text="VOLATİLİTE REJİMİ — YÜKSEK (kırmızı şerit) / DÜŞÜK",
+                   font=dict(size=11,color="#4a6080",family="DM Mono, monospace"), x=0),
+        legend={**LEGEND_RIGHT}, margin=dict(l=50,r=120,t=50,b=40),
+        hoverlabel=dict(bgcolor="#0d1220",font_size=12,font_color="#e8f0ff"),
+        xaxis=dict(gridcolor="#131c2e",tickfont=dict(size=10,color="#4a6080")),
+        xaxis2=dict(gridcolor="#131c2e",tickformat=x_fmt,tickfont=dict(size=10,color="#4a6080")),
+        yaxis=dict(gridcolor="#131c2e",tickfont=dict(size=10,color="#4a6080")),
+        yaxis2=dict(gridcolor="#131c2e",ticksuffix="%",tickfont=dict(size=10,color="#4a6080")),
+        hovermode="x unified"
+    )
+    st.plotly_chart(fig_reg, use_container_width=True)
+
+    # Rejim istatistikleri
+    reg_col1, reg_col2 = st.columns(2)
+    for rcol, rdf, rlabel, rcolor in [
+        (reg_col1, regime_high, "Yüksek Volatilite Rejimi", "#ff4d6a"),
+        (reg_col2, regime_low,  "Düşük Volatilite Rejimi",  "#00d4aa"),
+    ]:
+        with rcol:
+            rd = rdf["Degisim"]
+            st.markdown(f"""
+            <div class="perf-scorecard" style="border-top:2px solid {rcolor};">
+                <div class="perf-scorecard-title" style="color:{rcolor};">◈ {rlabel}</div>
+                <div class="perf-row"><span class="perf-row-label">Gözlem</span>
+                    <span class="perf-row-val">{len(rd)}</span></div>
+                <div class="perf-row"><span class="perf-row-label">Ort. Getiri</span>
+                    <span class="perf-row-val" style="color:{rcolor};">{s_(rd.mean())}{f3(rd.mean())}%</span></div>
+                <div class="perf-row"><span class="perf-row-label">Std Sapma</span>
+                    <span class="perf-row-val">±{f3(rd.std())}%</span></div>
+                <div class="perf-row"><span class="perf-row-label">Pozitif Oran</span>
+                    <span class="perf-row-val">%{f1((rd>0).mean()*100)}</span></div>
+                <div class="perf-row"><span class="perf-row-label">En İyi</span>
+                    <span class="perf-row-val" style="color:#00d4aa;">+{f2(rd.max())}%</span></div>
+                <div class="perf-row"><span class="perf-row-label">En Kötü</span>
+                    <span class="perf-row-val" style="color:#ff4d6a;">{f2(rd.min())}%</span></div>
+            </div>""", unsafe_allow_html=True)
+
+    # ════ GRAFİK 6 — USD/EUR Korelasyon ══════════════════════════════════
+    if kor_rolling is not None and len(kor_rolling.dropna()) > 10:
+        st.markdown('<div class="section-label">◈ USD/TRY — EUR/TRY Korelasyon (60 Günlük Yuvarlanmalı)</div>', unsafe_allow_html=True)
+        kor_plot = kor_rolling.dropna().copy()
+        kor_plot["_renk"] = kor_plot["Korelasyon"].apply(lambda x: "#00d4aa" if x>=0.8 else ("#f6ad55" if x>=0.5 else "#ff4d6a"))
+        fig_kor = go.Figure()
+        fig_kor.add_trace(go.Scatter(
+            x=kor_plot["Tarih"], y=kor_plot["Korelasyon"],
+            mode="lines", name="60G Korelasyon",
+            line=dict(color="#4a9eff", width=1.5),
+            fill="tozeroy", fillcolor="rgba(74,158,255,0.06)",
+            hovertemplate="%{x|%d.%m.%Y}<br>Korelasyon: <b>%{y:.4f}</b><extra></extra>"
+        ))
+        fig_kor.add_hline(y=float(kor_global), line_dash="dash", line_color="#f6ad55", line_width=1.2,
+                          annotation_text=f"Tarihsel ort. {kor_global:.4f}",
+                          annotation_font_color="#f6ad55", annotation_font_size=9)
+        fig_kor.add_hline(y=0, line_color="#2a4a7a", line_width=1)
+        apply_base(fig_kor, height=360,
+            title=dict(text=f"USD/TRY — EUR/TRY GÜNLÜK GETİRİ KORELASYONU · Tarihsel ort: {kor_global:.4f}",
+                       font=dict(size=11,color="#4a6080",family="DM Mono, monospace"), x=0),
+            xaxis=dict(gridcolor="#131c2e", tickformat="%b %Y", tickfont=dict(size=10,color="#4a6080")),
+            yaxis=dict(gridcolor="#131c2e", range=[-0.1,1.05], tickfont=dict(size=10,color="#4a6080")),
+            hovermode="x unified", showlegend=False)
+        st.plotly_chart(fig_kor, use_container_width=True)
+
+    # ════ GRAFİK 7 — Streak Analizi ══════════════════════════════════════
+    st.markdown('<div class="section-label">◈ Streak Analizi — Ardışık Pozitif / Negatif Seriler</div>', unsafe_allow_html=True)
+
+    str_col1, str_col2 = st.columns(2)
+
+    def _streak_hist(streaks, color, title, label):
+        if not streaks:
+            return go.Figure()
+        s_arr = np.array(streaks)
+        counts = pd.Series(s_arr).value_counts().sort_index()
+        fig_s = go.Figure(go.Bar(
+            x=counts.index.astype(str), y=counts.values,
+            marker_color=color, marker_line_width=0, opacity=0.85,
+            hovertemplate=f"{label}: <b>%{{x}}</b><br>Frekans: <b>%{{y}}</b><extra></extra>"
+        ))
+        fig_s.add_vline(x=str(int(np.mean(s_arr))), line_dash="dash",
+                        line_color="#f6ad55", line_width=1.2,
+                        annotation_text=f"Ort. {np.mean(s_arr):.1f}",
+                        annotation_font_color="#f6ad55", annotation_font_size=9)
+        apply_base(fig_s, height=300,
+            title=dict(text=title, font=dict(size=11,color="#4a6080",family="DM Mono, monospace"), x=0),
+            xaxis=dict(gridcolor="#131c2e", tickfont=dict(size=10,color="#4a6080"),
+                       title=dict(text=f"Ardışık {frekans.lower()} sayısı", font=dict(size=9,color="#4a6080"))),
+            yaxis=dict(gridcolor="#131c2e", tickfont=dict(size=10,color="#4a6080"),
+                       title=dict(text="Frekans", font=dict(size=9,color="#4a6080"))),
+            showlegend=False)
+        return fig_s
+
+    with str_col1:
+        fig_sp = _streak_hist(all_pos_str, "#00d4aa",
+                              f"POZİTİF SERİ DAĞILIMI · Max {max_pos_streak}",
+                              f"Ardışık pozitif {frekans.lower()}")
+        st.plotly_chart(fig_sp, use_container_width=True)
+
+    with str_col2:
+        fig_sn = _streak_hist(all_neg_str, "#ff4d6a",
+                              f"NEGATİF SERİ DAĞILIMI · Max {max_neg_streak}",
+                              f"Ardışık negatif {frekans.lower()}")
+        st.plotly_chart(fig_sn, use_container_width=True)
+
+    # ════ GRAFİK 8 — Momentum crossover ══════════════════════════════════
+    st.markdown('<div class="section-label">◈ Momentum — Kısa / Uzun Vade Çaprazlama</div>', unsafe_allow_html=True)
+
+    m_win_k = max(5,  min(20,  n//10))
+    m_win_u = max(20, min(60,  n//3))
+    periyot_df["Mom_K"] = periyot_df["Kur"].rolling(m_win_k).mean()
+    periyot_df["Mom_U"] = periyot_df["Kur"].rolling(m_win_u).mean()
+    periyot_df["Mom_Signal"] = np.where(periyot_df["Mom_K"] > periyot_df["Mom_U"], 1, -1)
+
+    fig_mom = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                            row_heights=[0.65, 0.35], vertical_spacing=0.04)
+    fig_mom.add_trace(go.Scatter(
+        x=periyot_df["Tarih"], y=periyot_df["Kur"], mode="lines",
+        name="Kur", line=dict(color="#2a4a7a", width=1.5),
+        hovertemplate="%{x|%d.%m.%Y}<br>%{y:.4f} ₺<extra></extra>"), row=1, col=1)
+    fig_mom.add_trace(go.Scatter(
+        x=periyot_df["Tarih"], y=periyot_df["Mom_K"], mode="lines",
+        name=f"MA{m_win_k} (hızlı)", line=dict(color="#00d4aa", width=1.3),
+        hovertemplate=f"MA{m_win_k}: %{{y:.4f}} ₺<extra></extra>"), row=1, col=1)
+    fig_mom.add_trace(go.Scatter(
+        x=periyot_df["Tarih"], y=periyot_df["Mom_U"], mode="lines",
+        name=f"MA{m_win_u} (yavaş)", line=dict(color="#f6ad55", width=1.3, dash="dot"),
+        hovertemplate=f"MA{m_win_u}: %{{y:.4f}} ₺<extra></extra>"), row=1, col=1)
+
+    periyot_df["Mom_Bar"] = periyot_df["Mom_K"] - periyot_df["Mom_U"]
+    periyot_df["_mb_c"] = periyot_df["Mom_Bar"].apply(lambda x: "#00d4aa" if x>=0 else "#ff4d6a")
+    fig_mom.add_trace(go.Bar(
+        x=periyot_df["Tarih"], y=periyot_df["Mom_Bar"],
+        marker_color=periyot_df["_mb_c"].values, marker_line_width=0, opacity=0.7,
+        name="Momentum Farkı",
+        hovertemplate="%{x|%d.%m.%Y}<br>Fark: <b>%{y:.4f}</b><extra></extra>"), row=2, col=1)
+    fig_mom.add_hline(y=0, line_color="#2a4a7a", line_width=1, row=2, col=1)
+
+    fig_mom.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(13,18,32,0.9)",
+        font=dict(color="#c9d4e8",family="DM Sans, sans-serif"), height=520,
+        title=dict(text=f"MOMENTUM — MA{m_win_k} / MA{m_win_u} ÇAPRAZLAMA",
+                   font=dict(size=11,color="#4a6080",family="DM Mono, monospace"), x=0),
+        legend={**LEGEND_RIGHT}, margin=dict(l=50,r=120,t=50,b=40),
+        hoverlabel=dict(bgcolor="#0d1220",font_size=12,font_color="#e8f0ff"),
+        xaxis=dict(gridcolor="#131c2e",tickfont=dict(size=10,color="#4a6080")),
+        xaxis2=dict(gridcolor="#131c2e",tickformat=x_fmt,tickfont=dict(size=10,color="#4a6080")),
+        yaxis=dict(gridcolor="#131c2e",tickfont=dict(size=10,color="#4a6080")),
+        yaxis2=dict(gridcolor="#131c2e",tickfont=dict(size=10,color="#4a6080")),
+        hovermode="x unified"
+    )
+    st.plotly_chart(fig_mom, use_container_width=True)
+
+    # ════ İNDİR ═══════════════════════════════════════════════════════════
+    st.markdown('<div class="section-label">◈ Performans Verisini İndir</div>', unsafe_allow_html=True)
+    dl_c1, dl_c2, _ = st.columns([1,1,4])
+
+    perf_exp = periyot_df[["Tarih","Yil","Kur","Degisim","Kumülatif","Drawdown"]].copy()
+    perf_exp.columns = ["Tarih","Yil","Kur","Degisim_%","Kumülatif_%","Drawdown_%"]
+    perf_exp["Tarih"] = perf_exp["Tarih"].dt.strftime("%d.%m.%Y")
+
+    with dl_c1:
+        csv_pf = perf_exp.to_csv(index=False).encode("utf-8-sig")
+        st.download_button(f"⬇ CSV ({frekans})", csv_pf,
+            f"performans_{frekans.lower()}_{yil_aralik[0]}_{yil_aralik[1]}.csv",
+            "text/csv", use_container_width=True)
+    with dl_c2:
+        buf_pf = io.BytesIO()
+        with pd.ExcelWriter(buf_pf, engine="openpyxl") as w:
+            perf_exp.to_excel(w, sheet_name="Kumulatif", index=False)
+            yil_perf_full.to_excel(w, sheet_name="Yil_Bazli", index=False)
+            if len(mevs)>0:
+                mevs_df[["AyAdi","OrtGetiri","FarkGenel"]].to_excel(w, sheet_name="Mevsimsellik", index=False)
+        st.download_button(f"⬇ Excel ({frekans})", buf_pf.getvalue(),
+            f"performans_{frekans.lower()}_{yil_aralik[0]}_{yil_aralik[1]}.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True)
+
     # ── Periyot seçici ────────────────────────────────────────────────────
     st.markdown("""
     <style>
@@ -1534,528 +2337,6 @@ with tab7:
         display: inline-block; font-family: 'DM Mono', monospace; font-size: 0.65rem;
         padding: 2px 8px; border-radius: 3px; margin-top: 8px;
     }
-    .perf-badge-pos { background: rgba(0,212,170,0.1); color: #00d4aa; border: 1px solid rgba(0,212,170,0.25); }
-    .perf-badge-neg { background: rgba(255,77,106,0.1); color: #ff4d6a; border: 1px solid rgba(255,77,106,0.25); }
-    .perf-badge-neu { background: rgba(74,158,255,0.1); color: #4a9eff; border: 1px solid rgba(74,158,255,0.25); }
-    .perf-divider { border: none; border-top: 1px solid #1e2d4a; margin: 10px 0; }
-    .perf-row { display: flex; justify-content: space-between; align-items: center; margin: 5px 0; }
-    .perf-row-label { font-family: 'DM Mono', monospace; font-size: 0.65rem; color: #4a6080; }
-    .perf-row-val { font-family: 'DM Mono', monospace; font-size: 0.75rem; color: #c9d4e8; }
-    .period-selector { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
-    .cum-header {
-        font-family: 'DM Mono', monospace; font-size: 0.65rem; text-transform: uppercase;
-        letter-spacing: 0.18em; color: #1b6cf2; margin-bottom: 4px;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-    st.markdown('<div class="section-label">◈ Periyot & Frekans Seçimi</div>', unsafe_allow_html=True)
-
-    sel_col1, sel_col2, sel_col3 = st.columns([2, 2, 3])
-    with sel_col1:
-        frekans = st.selectbox(
-            "Frekans",
-            ["Günlük", "Haftalık", "Aylık", "Çeyreklik", "Yıllık"],
-            index=1,
-            key="cum_frekans"
-        )
-    with sel_col2:
-        bas_yil = int(df["Tarih"].min().year)
-        bit_yil = int(df["Tarih"].max().year)
-        yil_aralik = st.select_slider(
-            "Yıl Aralığı",
-            options=list(range(bas_yil, bit_yil + 1)),
-            value=(bas_yil, bit_yil),
-            key="cum_yil"
-        )
-    with sel_col3:
-        karsilastirma = st.multiselect(
-            "Kümülatif Grafik Katmanları",
-            ["Kümülatif Değişim %", "Yuvarlanmalı Ort.", "Volatilite Bandı"],
-            default=["Kümülatif Değişim %", "Yuvarlanmalı Ort."],
-            key="cum_layers"
-        )
-
-    # ── Veriyi frekansa göre hazırla ──────────────────────────────────────
-    df_cum = df[(df["Yil"] >= yil_aralik[0]) & (df["Yil"] <= yil_aralik[1])].copy()
-
-    if frekans == "Günlük":
-        periyot_df = df_cum[["Tarih", "Dolar_Kuru", "Yuzde_Degisim", "Yil"]].copy()
-        periyot_df.columns = ["Tarih", "Kur", "Degisim", "Yil"]
-        periyot_df = periyot_df.sort_values("Tarih").reset_index(drop=True)
-        x_fmt = "%b %Y"
-        adet_label = "Günlük Gözlem"
-
-    elif frekans == "Haftalık":
-        hf_c = hf_global[(hf_global["PztTarih"].dt.year >= yil_aralik[0]) &
-                          (hf_global["PztTarih"].dt.year <= yil_aralik[1])].copy()
-        periyot_df = pd.DataFrame({
-            "Tarih":   hf_c["CumTarih"],
-            "Kur":     hf_c["CumKur"],
-            "Degisim": hf_c["HaftaDegisim"],
-            "Yil":     hf_c["CumTarih"].dt.year,
-        }).sort_values("Tarih").reset_index(drop=True)
-        x_fmt = "%b %Y"
-        adet_label = "Haftalık Gözlem"
-
-    elif frekans == "Aylık":
-        ay_g = df_cum.groupby(["Yil", "Ay"]).agg(
-            Tarih=("Tarih", "last"), Kur=("Dolar_Kuru", "last"),
-            IlkKur=("Dolar_Kuru", "first")
-        ).reset_index()
-        ay_g["Degisim"] = (ay_g["Kur"] / ay_g["IlkKur"] - 1) * 100
-        periyot_df = ay_g[["Tarih", "Kur", "Degisim", "Yil"]].sort_values("Tarih").reset_index(drop=True)
-        x_fmt = "%Y"
-        adet_label = "Aylık Gözlem"
-
-    elif frekans == "Çeyreklik":
-        df_cum["Ceyrek"] = df_cum["Tarih"].dt.quarter
-        cey_g = df_cum.groupby(["Yil", "Ceyrek"]).agg(
-            Tarih=("Tarih", "last"), Kur=("Dolar_Kuru", "last"),
-            IlkKur=("Dolar_Kuru", "first")
-        ).reset_index()
-        cey_g["Degisim"] = (cey_g["Kur"] / cey_g["IlkKur"] - 1) * 100
-        periyot_df = cey_g[["Tarih", "Kur", "Degisim", "Yil"]].sort_values("Tarih").reset_index(drop=True)
-        x_fmt = "%Y"
-        adet_label = "Çeyreklik Gözlem"
-
-    else:  # Yıllık
-        yil_g = df_cum.groupby("Yil").agg(
-            Tarih=("Tarih", "last"), Kur=("Dolar_Kuru", "last"),
-            IlkKur=("Dolar_Kuru", "first")
-        ).reset_index()
-        yil_g["Degisim"] = (yil_g["Kur"] / yil_g["IlkKur"] - 1) * 100
-        periyot_df = yil_g[["Tarih", "Kur", "Degisim", "Yil"]].sort_values("Tarih").reset_index(drop=True)
-        x_fmt = "%Y"
-        adet_label = "Yıllık Gözlem"
-
-    # Kümülatif hesapla
-    periyot_df["Kumülatif"] = (periyot_df["Kur"] / periyot_df["Kur"].iloc[0] - 1) * 100
-    periyot_df["MA20"]      = periyot_df["Kumülatif"].rolling(min(20, max(3, len(periyot_df)//10))).mean()
-    periyot_df["Vol_band"]  = periyot_df["Degisim"].rolling(min(20, max(3, len(periyot_df)//10))).std()
-    periyot_df["Band_ust"]  = periyot_df["Kumülatif"] + periyot_df["Vol_band"] * 2
-    periyot_df["Band_alt"]  = periyot_df["Kumülatif"] - periyot_df["Vol_band"] * 2
-
-    # ── SCORECARD SATIRI ──────────────────────────────────────────────────
-    st.markdown('<div class="section-label">◈ Performans Özeti</div>', unsafe_allow_html=True)
-
-    toplam_getiri  = periyot_df["Kumülatif"].iloc[-1]
-    ort_degisim    = periyot_df["Degisim"].mean()
-    std_degisim    = periyot_df["Degisim"].std()
-    maks_getiri    = periyot_df["Degisim"].max()
-    min_getiri     = periyot_df["Degisim"].min()
-    pozitif_adet   = (periyot_df["Degisim"] > 0).sum()
-    negatif_adet   = (periyot_df["Degisim"] < 0).sum()
-    toplam_adet    = len(periyot_df)
-    poz_oran       = pozitif_adet / toplam_adet * 100 if toplam_adet > 0 else 0
-    sharpe_approx  = (ort_degisim / std_degisim * (toplam_adet ** 0.5)) if std_degisim > 0 else 0
-    max_drawdown   = (periyot_df["Kumülatif"] - periyot_df["Kumülatif"].cummax()).min()
-    ilk_kur        = periyot_df["Kur"].iloc[0]
-    son_kur_c      = periyot_df["Kur"].iloc[-1]
-    tarih_bas      = periyot_df["Tarih"].iloc[0].strftime("%d.%m.%Y")
-    tarih_son      = periyot_df["Tarih"].iloc[-1].strftime("%d.%m.%Y")
-
-    tg_sign  = "+" if toplam_getiri >= 0 else ""
-    ort_sign = "+" if ort_degisim >= 0 else ""
-
-    sc1, sc2, sc3, sc4, sc5 = st.columns(5)
-
-    with sc1:
-        st.markdown(f"""
-        <div class="perf-scorecard">
-            <div class="perf-scorecard-title">◈ Toplam Getiri</div>
-            <div class="perf-big {'metric-pos' if toplam_getiri>=0 else 'metric-neg'}"
-                 style="color:{'#00d4aa' if toplam_getiri>=0 else '#ff4d6a'}">
-                {tg_sign}{f'{toplam_getiri:.1f}'.replace('.',',')}%
-            </div>
-            <div class="perf-sub">
-                {fkur(ilk_kur)} → {fkur(son_kur_c)} ₺<br>
-                {tarih_bas} – {tarih_son}
-            </div>
-            <span class="perf-badge {'perf-badge-pos' if toplam_getiri>=0 else 'perf-badge-neg'}">
-                {frekans} bazlı · {toplam_adet} gözlem
-            </span>
-        </div>""", unsafe_allow_html=True)
-
-    with sc2:
-        st.markdown(f"""
-        <div class="perf-scorecard">
-            <div class="perf-scorecard-title">◈ Periyot Dağılımı</div>
-            <div style="display:flex; gap:12px; align-items:flex-end; margin-bottom:6px;">
-                <div>
-                    <div style="font-family:'DM Mono',monospace;font-size:0.6rem;color:#3a5070;margin-bottom:4px;">POZİTİF</div>
-                    <div class="perf-big" style="color:#00d4aa;font-size:1.8rem;">{pozitif_adet}</div>
-                </div>
-                <div style="color:#1e2d4a;font-size:1.5rem;padding-bottom:4px;">/</div>
-                <div>
-                    <div style="font-family:'DM Mono',monospace;font-size:0.6rem;color:#3a5070;margin-bottom:4px;">NEGATİF</div>
-                    <div class="perf-big" style="color:#ff4d6a;font-size:1.8rem;">{negatif_adet}</div>
-                </div>
-            </div>
-            <div class="perf-sub">{adet_label} · Toplam {toplam_adet}</div>
-            <div style="margin-top:10px; background:#131c2e; border-radius:4px; height:6px; overflow:hidden;">
-                <div style="width:{poz_oran:.1f}%; background:linear-gradient(90deg,#00d4aa,#1b6cf2); height:100%;"></div>
-            </div>
-            <div class="perf-sub" style="margin-top:4px;">Pozitif oran: %{poz_oran:.1f}</div>
-        </div>""", unsafe_allow_html=True)
-
-    with sc3:
-        st.markdown(f"""
-        <div class="perf-scorecard">
-            <div class="perf-scorecard-title">◈ Ortalama & Volatilite</div>
-            <div class="perf-mid" style="color:{'#00d4aa' if ort_degisim>=0 else '#ff4d6a'}">
-                {ort_sign}{f'{ort_degisim:.3f}'.replace('.',',')}%
-            </div>
-            <div class="perf-sub">Ort. {frekans.lower()} değişim</div>
-            <hr class="perf-divider">
-            <div class="perf-row">
-                <span class="perf-row-label">Std. Sapma</span>
-                <span class="perf-row-val">±{f'{std_degisim:.3f}'.replace('.',',')}%</span>
-            </div>
-            <div class="perf-row">
-                <span class="perf-row-label">En İyi</span>
-                <span class="perf-row-val" style="color:#00d4aa">+{f'{maks_getiri:.2f}'.replace('.',',')}%</span>
-            </div>
-            <div class="perf-row">
-                <span class="perf-row-label">En Kötü</span>
-                <span class="perf-row-val" style="color:#ff4d6a">{f'{min_getiri:.2f}'.replace('.',',')}%</span>
-            </div>
-        </div>""", unsafe_allow_html=True)
-
-    with sc4:
-        sharpe_color = "#00d4aa" if sharpe_approx > 0 else "#ff4d6a"
-        st.markdown(f"""
-        <div class="perf-scorecard">
-            <div class="perf-scorecard-title">◈ Risk Metrikleri</div>
-            <div class="perf-mid" style="color:{sharpe_color}">
-                {f'{sharpe_approx:.2f}'.replace('.',',')}
-            </div>
-            <div class="perf-sub">Approx. Sharpe</div>
-            <hr class="perf-divider">
-            <div class="perf-row">
-                <span class="perf-row-label">Max Drawdown</span>
-                <span class="perf-row-val" style="color:#ff4d6a">{f'{max_drawdown:.2f}'.replace('.',',')}%</span>
-            </div>
-            <div class="perf-row">
-                <span class="perf-row-label">Volatilite</span>
-                <span class="perf-row-val">±{f'{std_degisim:.3f}'.replace('.',',')}%</span>
-            </div>
-            <div class="perf-row">
-                <span class="perf-row-label">Poz/Neg</span>
-                <span class="perf-row-val">{pozitif_adet}/{negatif_adet}</span>
-            </div>
-        </div>""", unsafe_allow_html=True)
-
-    with sc5:
-        # Yıl bazlı en iyi/en kötü
-        yil_perf = periyot_df.groupby("Yil")["Degisim"].agg(
-            ort="mean", toplam="sum", adet="count"
-        ).reset_index()
-        en_iyi_yil  = yil_perf.loc[yil_perf["ort"].idxmax()]
-        en_kotu_yil = yil_perf.loc[yil_perf["ort"].idxmin()]
-        st.markdown(f"""
-        <div class="perf-scorecard">
-            <div class="perf-scorecard-title">◈ Yıl Bazlı Ekstremler</div>
-            <div class="perf-row" style="margin-bottom:8px;">
-                <span class="perf-row-label">En İyi Yıl</span>
-                <span class="perf-row-val" style="color:#00d4aa">{int(en_iyi_yil['Yil'])}</span>
-            </div>
-            <div style="font-family:'DM Mono',monospace;font-size:1.1rem;color:#00d4aa;margin-bottom:4px;">
-                +{f'{en_iyi_yil["ort"]:.3f}'.replace('.',',')}% ort.
-            </div>
-            <div class="perf-sub">{int(en_iyi_yil['adet'])} {frekans.lower()} gözlem</div>
-            <hr class="perf-divider">
-            <div class="perf-row" style="margin-bottom:4px;">
-                <span class="perf-row-label">En Kötü Yıl</span>
-                <span class="perf-row-val" style="color:#ff4d6a">{int(en_kotu_yil['Yil'])}</span>
-            </div>
-            <div style="font-family:'DM Mono',monospace;font-size:1.1rem;color:#ff4d6a;">
-                {f'{en_kotu_yil["ort"]:.3f}'.replace('.',',')}% ort.
-            </div>
-        </div>""", unsafe_allow_html=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # ── Kümülatif Değişim Grafiği ─────────────────────────────────────────
-    st.markdown(
-        f'<div class="section-label">◈ Kümülatif Değişim — {frekans} '
-        f'<span style="color:#4a9eff;font-size:0.8rem;font-weight:400;">'
-        f'· {yil_aralik[0]}–{yil_aralik[1]} · {toplam_adet} gözlem'
-        f'</span></div>',
-        unsafe_allow_html=True
-    )
-
-    fig_cum = go.Figure()
-
-    if "Volatilite Bandı" in karsilastirma:
-        fig_cum.add_trace(go.Scatter(
-            x=pd.concat([periyot_df["Tarih"], periyot_df["Tarih"][::-1]]),
-            y=pd.concat([periyot_df["Band_ust"], periyot_df["Band_alt"][::-1]]),
-            fill="toself", fillcolor="rgba(74,158,255,0.04)",
-            line=dict(color="rgba(74,158,255,0)"),
-            name="Volatilite Bandı (±2σ)", showlegend=True,
-            hoverinfo="skip"
-        ))
-
-    if "Kümülatif Değişim %" in karsilastirma:
-        fig_cum.add_trace(go.Scatter(
-            x=periyot_df["Tarih"], y=periyot_df["Kumülatif"],
-            mode="lines", name=f"Kümülatif % ({frekans})",
-            line=dict(color="#4a9eff", width=2),
-            fill="tozeroy",
-            fillcolor="rgba(74,158,255,0.06)",
-            customdata=list(zip(
-                periyot_df["Kur"].apply(tr_fmt_kur),
-                periyot_df["Degisim"].apply(lambda x: tr_fmt_pct(x, 2)),
-                periyot_df["Kumülatif"].apply(lambda x: tr_fmt_pct(x, 2))
-            )),
-            hovertemplate=(
-                "<b>%{x|%d.%m.%Y}</b><br>"
-                "Kür: %{customdata[0]} ₺<br>"
-                f"{frekans} Δ: <b>%{{customdata[1]}}</b><br>"
-                "Kümülatif: <b>%{customdata[2]}</b><extra></extra>"
-            )
-        ))
-
-    if "Yuvarlanmalı Ort." in karsilastirma:
-        fig_cum.add_trace(go.Scatter(
-            x=periyot_df["Tarih"], y=periyot_df["MA20"],
-            mode="lines", name="Yuvarlanmalı Ort.",
-            line=dict(color="#f6ad55", width=1.5, dash="dot"),
-            hovertemplate="%{x|%d.%m.%Y}<br>MA: <b>%{y:.2f}%</b><extra></extra>"
-        ))
-
-    fig_cum.add_hline(y=0, line_color="#2a4a7a", line_width=1)
-    tv_c, tt_c = safe_ticks(
-        periyot_df["Kumülatif"].min(), periyot_df["Kumülatif"].max(), n=10, decimals=0, suffix="%"
-    )
-    apply_base(fig_cum, height=480,
-        title=dict(
-            text=f"KÜMÜLATİF DEĞİŞİM — {doviz_label} — {frekans.upper()} — {yil_aralik[0]}–{yil_aralik[1]}",
-            font=dict(size=11, color="#4a6080", family="DM Mono, monospace"), x=0
-        ),
-        xaxis=dict(gridcolor="#131c2e", tickformat=x_fmt, tickfont=dict(size=10, color="#4a6080"),
-                   showspikes=True, spikecolor="#2a4a7a", spikethickness=1),
-        yaxis={**yt(tv_c, tt_c, {"gridcolor":"#131c2e", "tickfont":dict(size=10,color="#4a6080")})},
-        hovermode="x unified"
-    )
-    st.plotly_chart(fig_cum, use_container_width=True)
-
-    # ── Periyot Bazlı Değişim Bar ─────────────────────────────────────────
-    st.markdown(
-        f'<div class="section-label">◈ {frekans} Değişim — Bar Görünümü</div>',
-        unsafe_allow_html=True
-    )
-
-    periyot_df["_renk"] = periyot_df["Degisim"].apply(
-        lambda x: "#00d4aa" if x >= 0 else "#ff4d6a"
-    )
-    periyot_df["_d_str"] = periyot_df["Degisim"].apply(lambda x: tr_fmt_pct(x, 2))
-    periyot_df["_k_str"] = periyot_df["Kur"].apply(tr_fmt_kur)
-
-    fig_bar = go.Figure(go.Bar(
-        x=periyot_df["Tarih"], y=periyot_df["Degisim"],
-        marker_color=periyot_df["_renk"].values,
-        marker_line_width=0,
-        opacity=0.85,
-        customdata=list(zip(periyot_df["_d_str"], periyot_df["_k_str"], periyot_df["Yil"])),
-        hovertemplate=(
-            "<b>%{x|%d.%m.%Y}</b><br>"
-            f"{frekans} Δ: <b>%{{customdata[0]}}</b><br>"
-            "Kur: %{customdata[1]} ₺<extra></extra>"
-        )
-    ))
-    fig_bar.add_hline(y=0, line_color="#2a4a7a", line_width=1)
-    tv_b, tt_b = safe_ticks(periyot_df["Degisim"].min(), periyot_df["Degisim"].max(), n=10, decimals=1, suffix="%")
-    apply_base(fig_bar, height=360,
-        title=dict(
-            text=f"{frekans.upper()} DEĞİŞİM DAĞILIMI · {yil_aralik[0]}–{yil_aralik[1]}",
-            font=dict(size=11, color="#4a6080", family="DM Mono, monospace"), x=0
-        ),
-        xaxis=dict(gridcolor="#131c2e", tickformat=x_fmt, tickfont=dict(size=10, color="#4a6080")),
-        yaxis={**yt(tv_b, tt_b, {"gridcolor":"#131c2e","tickfont":dict(size=10,color="#4a6080")})},
-        showlegend=False, hovermode="closest"
-    )
-    st.plotly_chart(fig_bar, use_container_width=True)
-
-    # ── Yıl Bazlı Performans Matrisi ──────────────────────────────────────
-    st.markdown('<div class="section-label">◈ Yıl Bazlı Performans Matrisi</div>', unsafe_allow_html=True)
-
-    yil_perf_full = periyot_df.groupby("Yil").agg(
-        Adet       = ("Degisim", "count"),
-        Ort_Pct    = ("Degisim", "mean"),
-        Toplam_Pct = ("Degisim", "sum"),
-        Std        = ("Degisim", "std"),
-        En_Iyi     = ("Degisim", "max"),
-        En_Kotu    = ("Degisim", "min"),
-        Poz_Adet   = ("Degisim", lambda x: (x > 0).sum()),
-        Neg_Adet   = ("Degisim", lambda x: (x < 0).sum()),
-    ).reset_index()
-    yil_perf_full["Poz_Oran"] = (yil_perf_full["Poz_Adet"] / yil_perf_full["Adet"] * 100).round(1)
-
-    col_m1, col_m2 = st.columns([2, 1])
-
-    with col_m1:
-        # Yıl bazlı ort değişim bar
-        yp = yil_perf_full.copy()
-        yp["_renk"] = yp["Ort_Pct"].apply(lambda x: "#00d4aa" if x >= 0 else "#ff4d6a")
-        yp["_ort_s"] = yp["Ort_Pct"].apply(lambda x: tr_fmt_pct(x, 3))
-        yp["_std_s"] = yp["Std"].apply(lambda x: f'±{f"{x:.3f}".replace(".",",")}%')
-        fig_yil = go.Figure()
-        fig_yil.add_trace(go.Bar(
-            x=yp["Yil"].astype(str), y=yp["Ort_Pct"],
-            marker_color=yp["_renk"].values,
-            marker_line_width=0, opacity=0.9,
-            customdata=list(zip(yp["_ort_s"], yp["_std_s"], yp["Adet"], yp["Poz_Oran"])),
-            hovertemplate=(
-                "<b>%{x}</b><br>"
-                f"Ort. {frekans.lower()} Δ: <b>%{{customdata[0]}}</b><br>"
-                "Volatilite: %{customdata[1]}<br>"
-                "Gözlem: %{customdata[2]}<br>"
-                "Pozitif oran: %%{customdata[3]}<extra></extra>"
-            )
-        ))
-        fig_yil.add_trace(go.Scatter(
-            x=yp["Yil"].astype(str), y=yp["Poz_Oran"] / 10 - 5,
-            mode="lines+markers", name="Poz. Oran (sağ eksen ölçekli)",
-            line=dict(color="#b794f4", width=1.5, dash="dot"),
-            marker=dict(size=5),
-            hovertemplate="%{x}<br>Poz. oran: <b>%%{y:.0f}</b><extra></extra>",
-            yaxis="y2"
-        ))
-        fig_yil.add_hline(y=0, line_color="#2a4a7a", line_width=1)
-        tv_y, tt_y = safe_ticks(yp["Ort_Pct"].min(), yp["Ort_Pct"].max(), n=8, decimals=2, suffix="%")
-        fig_yil.update_layout(
-            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(13,18,32,0.9)",
-            font=dict(color="#c9d4e8", family="DM Sans, sans-serif"), height=380,
-            title=dict(text=f"YIL BAZLI ORT. {frekans.upper()} DEĞİŞİM",
-                       font=dict(size=11, color="#4a6080", family="DM Mono, monospace"), x=0),
-            xaxis=dict(gridcolor="#131c2e", tickfont=dict(size=10, color="#4a6080")),
-            yaxis=dict(gridcolor="#131c2e", tickfont=dict(size=10, color="#4a6080"),
-                       **yt(tv_y, tt_y)),
-            yaxis2=dict(overlaying="y", side="right", showgrid=False,
-                        tickfont=dict(size=9, color="#b794f4"),
-                        title=dict(text="Poz. Oran %", font=dict(color="#b794f4", size=9))),
-            legend={**LEGEND_RIGHT},
-            margin=dict(l=50, r=120, t=50, b=40),
-            hoverlabel=dict(bgcolor="#0d1220", font_size=12, font_color="#e8f0ff"),
-            showlegend=True, hovermode="x unified"
-        )
-        st.plotly_chart(fig_yil, use_container_width=True)
-
-    with col_m2:
-        # Yıl kartları
-        st.markdown(f"""
-        <div style="font-family:'DM Mono',monospace;font-size:0.6rem;text-transform:uppercase;
-                    letter-spacing:0.15em;color:#4a6080;margin-bottom:12px;">
-            YIL BAZLI ÖZET · {frekans.upper()}
-        </div>""", unsafe_allow_html=True)
-
-        for _, yr in yil_perf_full.sort_values("Yil", ascending=False).iterrows():
-            ort_c = "#00d4aa" if yr["Ort_Pct"] >= 0 else "#ff4d6a"
-            sign  = "+" if yr["Ort_Pct"] >= 0 else ""
-            st.markdown(f"""
-            <div style="background:#0d1220;border:1px solid #1e2d4a;border-left:3px solid {ort_c};
-                        border-radius:6px;padding:10px 12px;margin-bottom:8px;">
-                <div style="display:flex;justify-content:space-between;align-items:center;">
-                    <span style="font-family:'DM Mono',monospace;font-size:0.75rem;color:#c9d4e8;font-weight:500;">
-                        {int(yr['Yil'])}
-                    </span>
-                    <span style="font-family:'DM Mono',monospace;font-size:0.85rem;color:{ort_c};font-weight:500;">
-                        {sign}{f'{yr["Ort_Pct"]:.2f}'.replace('.',',')}%
-                    </span>
-                </div>
-                <div style="display:flex;justify-content:space-between;margin-top:5px;">
-                    <span style="font-family:'DM Mono',monospace;font-size:0.62rem;color:#3a5070;">
-                        {int(yr['Adet'])} gözlem · %{yr['Poz_Oran']:.0f} poz
-                    </span>
-                    <span style="font-family:'DM Mono',monospace;font-size:0.62rem;color:#3a5070;">
-                        ±{f'{yr["Std"]:.2f}'.replace('.',',')}%
-                    </span>
-                </div>
-                <div style="margin-top:6px;background:#131c2e;border-radius:3px;height:3px;overflow:hidden;">
-                    <div style="width:{yr['Poz_Oran']:.1f}%;background:{ort_c};height:100%;opacity:0.7;"></div>
-                </div>
-            </div>""", unsafe_allow_html=True)
-
-    # ── Rolling getiri karşılaştırması (3 periyot üst üste) ───────────────
-    st.markdown('<div class="section-label">◈ Dönem İçi Kümülatif Karşılaştırma (Yıl Üstüne Yıl)</div>', unsafe_allow_html=True)
-
-    YILLAR = sorted(periyot_df["Yil"].unique())
-    YCOLOR = ["#4a9eff","#00d4aa","#f6ad55","#b794f4","#ff4d6a",
-              "#60a5fa","#34d399","#fbbf24","#a78bfa","#fb7185",
-              "#38bdf8","#4ade80","#facc15","#c084fc","#f43f5e"]
-
-    fig_yoy = go.Figure()
-    for i, yil in enumerate(YILLAR):
-        sub = periyot_df[periyot_df["Yil"] == yil].copy().reset_index(drop=True)
-        if len(sub) < 2:
-            continue
-        sub["GunSirasi"] = range(len(sub))
-        sub["YilKum"]    = (sub["Kur"] / sub["Kur"].iloc[0] - 1) * 100
-        color = YCOLOR[i % len(YCOLOR)]
-        fig_yoy.add_trace(go.Scatter(
-            x=sub["GunSirasi"], y=sub["YilKum"],
-            mode="lines", name=str(yil),
-            line=dict(color=color, width=1.5),
-            opacity=0.85,
-            customdata=list(zip(
-                sub["Tarih"].dt.strftime("%d.%m.%Y"),
-                sub["Kur"].apply(tr_fmt_kur),
-                sub["YilKum"].apply(lambda x: tr_fmt_pct(x, 2))
-            )),
-            hovertemplate=(
-                f"<b>{yil}</b> — %{{customdata[0]}}<br>"
-                "Kur: %{customdata[1]} ₺<br>"
-                "Yıl içi kümülatif: <b>%{customdata[2]}</b><extra></extra>"
-            )
-        ))
-
-    fig_yoy.add_hline(y=0, line_color="#2a4a7a", line_width=1, line_dash="dash")
-    apply_base(fig_yoy, height=480,
-        title=dict(
-            text=f"YIL İÇİ KÜMÜLATİF ({frekans.upper()}) — YIL ÜZERİNE YIL",
-            font=dict(size=11, color="#4a6080", family="DM Mono, monospace"), x=0
-        ),
-        xaxis=dict(gridcolor="#131c2e", title=dict(text=f"{frekans} sırası", font=dict(size=10, color="#4a6080")),
-                   tickfont=dict(size=10, color="#4a6080")),
-        yaxis=dict(gridcolor="#131c2e", ticksuffix="%", tickfont=dict(size=10, color="#4a6080")),
-        hovermode="closest",
-        legend=dict(bgcolor="rgba(13,18,32,0.9)", bordercolor="#1e2d4a", borderwidth=1,
-                    font=dict(size=10), orientation="v", x=1.01, xanchor="left", y=0.5, yanchor="middle")
-    )
-    st.plotly_chart(fig_yoy, use_container_width=True)
-
-    # ── İndir ─────────────────────────────────────────────────────────────
-    st.markdown('<div class="section-label">◈ Performans Verisini İndir</div>', unsafe_allow_html=True)
-    dl_c1, dl_c2, _ = st.columns([1, 1, 4])
-
-    perf_export = periyot_df[["Tarih","Yil","Kur","Degisim","Kumülatif"]].copy()
-    perf_export.columns = ["Tarih","Yil","Kur","Degisim_%","Kumülatif_%"]
-    perf_export["Tarih"] = perf_export["Tarih"].dt.strftime("%d.%m.%Y")
-
-    with dl_c1:
-        csv_perf = perf_export.to_csv(index=False).encode("utf-8-sig")
-        st.download_button(
-            f"⬇ CSV ({frekans})",
-            csv_perf,
-            f"kumulatif_{frekans.lower()}_{yil_aralik[0]}_{yil_aralik[1]}.csv",
-            "text/csv",
-            use_container_width=True
-        )
-    with dl_c2:
-        buf_perf = io.BytesIO()
-        with pd.ExcelWriter(buf_perf, engine="openpyxl") as w:
-            perf_export.to_excel(w, sheet_name="Kumulatif", index=False)
-            yil_perf_full.to_excel(w, sheet_name="Yil_Bazli", index=False)
-        st.download_button(
-            f"⬇ Excel ({frekans})",
-            buf_perf.getvalue(),
-            f"kumulatif_{frekans.lower()}_{yil_aralik[0]}_{yil_aralik[1]}.xlsx",
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
-        )
-
 st.markdown("""
 <div style="text-align:center; color:#1e2d4a; font-size:0.7rem; padding:30px 0 10px 0;
             border-top:1px solid #0d1220; margin-top:30px;
