@@ -2212,15 +2212,34 @@ with tab7:
             return go.Figure()
         s_arr = np.array(streaks)
         counts = pd.Series(s_arr).value_counts().sort_index()
+        mean_val = float(np.mean(s_arr))
+        # Kategorik eksende x değerini numeric index pozisyonuna çevir
+        x_labels = counts.index.astype(str).tolist()
+        # mean_val'e en yakın label pozisyonunu bul (0-tabanlı)
+        x_numeric = [int(v) for v in counts.index]
+        mean_pos  = min(range(len(x_numeric)), key=lambda i: abs(x_numeric[i] - mean_val))
+
         fig_s = go.Figure(go.Bar(
-            x=counts.index.astype(str), y=counts.values,
+            x=x_labels, y=counts.values,
             marker_color=color, marker_line_width=0, opacity=0.85,
             hovertemplate=f"{label}: <b>%{{x}}</b><br>Frekans: <b>%{{y}}</b><extra></extra>"
         ))
-        fig_s.add_vline(x=str(int(np.mean(s_arr))), line_dash="dash",
-                        line_color="#f6ad55", line_width=1.2,
-                        annotation_text=f"Ort. {np.mean(s_arr):.1f}",
-                        annotation_font_color="#f6ad55", annotation_font_size=9)
+        # add_shape paper koordinatlarıyla kategorik eksende çalışır
+        fig_s.add_shape(
+            type="line",
+            xref="x", yref="paper",
+            x0=x_labels[mean_pos], x1=x_labels[mean_pos],
+            y0=0, y1=1,
+            line=dict(color="#f6ad55", width=1.2, dash="dash")
+        )
+        fig_s.add_annotation(
+            x=x_labels[mean_pos], xref="x",
+            y=1, yref="paper",
+            text=f"Ort. {mean_val:.1f}",
+            font=dict(color="#f6ad55", size=9, family="DM Mono, monospace"),
+            showarrow=False, yanchor="bottom", xanchor="left",
+            bgcolor="rgba(13,18,32,0.7)"
+        )
         apply_base(fig_s, height=300,
             title=dict(text=title, font=dict(size=11,color="#4a6080",family="DM Mono, monospace"), x=0),
             xaxis=dict(gridcolor="#131c2e", tickfont=dict(size=10,color="#4a6080"),
