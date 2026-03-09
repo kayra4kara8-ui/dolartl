@@ -604,12 +604,13 @@ hf_global["_hf_str"]  = hf_global["HaftaDegisim"].apply(tr_fmt_pct)
 sp_df = spread_hesapla(df_raw, doviz_sec)
 
 # ─── TABS ────────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-    "GÜNLÜK ANALİZ", "HAFTALIK & AYLIK", "İLERİ ANALİZ",
-    "DAĞILIM & ISITMA", "SPREAD ANALİZİ", "TABLOLAR", "KÜMÜLATİF & PERFORMANS"
+
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "📅 GÜNLÜK", "📆 HAFTALIK", "🗓 AYLIK & YILLIK",
+    "📈 KÜMÜLATİF & PERFORMANS", "🔭 İLERİ ANALİZ & DAĞILIM",
+    "📋 TABLOLAR & SPREAD"
 ])
 
-# ════════════ TAB 1 ════════════
 with tab1:
     st.markdown(f'<div class="section-label">◈ {doviz_label} Kuru & Sıçrama Noktaları</div>', unsafe_allow_html=True)
     fig1 = go.Figure()
@@ -779,7 +780,6 @@ with tab1:
             use_container_width=True,
         )
 
-# ════════════ TAB 2 ════════════
 with tab2:
     GUN_COLORS = {"Pazartesi":"#4a9eff","Salı":"#b794f4","Çarşamba":"#f6ad55","Perşembe":"#00d4aa","Cuma":"#ff4d6a"}
     ALL_DAYS_TR = ["Pazartesi","Salı","Çarşamba","Perşembe","Cuma"]
@@ -955,11 +955,17 @@ with tab2:
     </div>""", unsafe_allow_html=True)
     st.markdown("<br>", unsafe_allow_html=True)
 
+with tab3:
+    # Gun_Adi_TR ve aktif_gunler tab2'de tanımlandı, burada da lazım
+    if "Gun_Adi_TR" not in df.columns:
+        df["Gun_Adi_TR"] = df["Gun_Adi"].map(TR_GUN)
+    aktif_gunler_t3 = gun_filtre if gun_filtre else ["Pazartesi","Salı","Çarşamba","Perşembe","Cuma"]
+
     st.markdown('<div class="section-label">◈ Aylık Getiri (21 Gün) & Volatilite</div>', unsafe_allow_html=True)
     col_am1, col_am2 = st.columns(2)
     with col_am1:
         aylik_g = df.dropna(subset=["Aylik_Getiri"]).copy()
-        aylik_g_filt = aylik_g[aylik_g["Gun_Adi_TR"].isin(aktif_gunler)] if gun_filtre else aylik_g.copy()
+        aylik_g_filt = aylik_g[aylik_g["Gun_Adi_TR"].isin(aktif_gunler_t3)] if gun_filtre else aylik_g.copy()
         aylik_g_filt = aylik_g_filt.copy()
         aylik_g_filt["renk"] = aylik_g_filt["Aylik_Getiri"].apply(lambda x: "#4a9eff" if x >= 0 else "#ff4d6a")
         aylik_g_filt["_ag"]  = aylik_g_filt["Aylik_Getiri"].apply(tr_fmt_pct)
@@ -1019,539 +1025,8 @@ with tab2:
         yaxis=dict(tickfont=dict(size=11, color="#4a6080"), autorange="reversed"))
     st.plotly_chart(fig_heat, use_container_width=True)
 
-# ════════════ TAB 3 ════════════
-with tab3:
-    st.markdown(f'<div class="section-label">◈ Büyük Sıçramalardan Sonra Ne Oluyor? (≥%{fwd_threshold})</div>', unsafe_allow_html=True)
-    periods = [1, 5, 10, 21, 63]
-    period_labels = {1:"1G", 5:"5G (1Hf)", 10:"10G (2Hf)", 21:"21G (1Ay)", 63:"63G (3Ay)"}
-    fwd = forward_analysis(df, fwd_threshold, periods)
-
-    if not fwd:
-        st.warning(f"%{fwd_threshold} eşiğinde yeterli sıçrama bulunamadı.")
-    else:
-        cards_html = ""
-        for p in periods:
-            if p in fwd:
-                r = fwd[p]
-                mean_cls = "metric-pos" if r["mean"] >= 0 else "metric-neg"
-                sign = "+" if r["mean"] >= 0 else ""
-                cards_html += f"""
-                <div class="forward-card">
-                  <div class="forward-title">{period_labels[p]} Sonra</div>
-                  <div class="forward-big {mean_cls}">{sign}{f"{r['mean']:.2f}".replace('.',',')}%</div>
-                  <div class="forward-detail">
-                    <span style="color:#4a6080">Medyan:</span> <span class="forward-accent">{'+' if r['median']>=0 else ''}{f"{r['median']:.2f}".replace('.',',')}%</span><br>
-                    <span style="color:#4a6080">Pozitif oran:</span> <span class="forward-accent">%{r['pos_pct']:.0f}</span><br>
-                    <span style="color:#4a6080">IQR:</span> <span class="forward-accent">{f"{r['p25']:.2f}".replace('.',',')}% — {f"{r['p75']:.2f}".replace('.',',')}%</span><br>
-                    <span style="color:#4a6080">Örnek:</span> <span class="forward-accent">{r['n']}</span>
-                  </div>
-                </div>"""
-        st.markdown(f'<div class="forward-grid">{cards_html}</div>', unsafe_allow_html=True)
-
-        st.markdown('<div class="section-label">◈ Dağılım (Box Plot)</div>', unsafe_allow_html=True)
-        fig_box = go.Figure()
-        colors_box = ["#4a9eff","#00d4aa","#f6ad55","#b794f4","#ff4d6a"]
-        for i, p in enumerate(periods):
-            if p in fwd:
-                c = colors_box[i]
-                rr, gg, bb = int(c[1:3],16), int(c[3:5],16), int(c[5:7],16)
-                fig_box.add_trace(go.Box(y=fwd[p]["raw"], name=period_labels[p], marker_color=c,
-                    boxpoints="outliers", line_width=1.5, fillcolor=f"rgba({rr},{gg},{bb},0.1)",
-                    hovertemplate="%{y:.3f}%<extra></extra>"))
-        fig_box.add_hline(y=0, line_color="#1e2d4a", line_width=1, line_dash="dash")
-        apply_base(fig_box, height=480,
-            title=dict(text=f"%{fwd_threshold}+ SIÇRAMA SONRASI GETİRİ DAĞILIMI", font=dict(size=11, color="#4a6080", family="DM Mono, monospace"), x=0),
-            yaxis=dict(gridcolor="#131c2e", ticksuffix="%"),
-            xaxis=dict(gridcolor="#0d1220"))
-        st.plotly_chart(fig_box, use_container_width=True)
-
-        st.markdown('<div class="section-label">◈ Pozitif Kapanış Oranı (Her Dönem)</div>', unsafe_allow_html=True)
-        pos_rates    = [fwd[p]["pos_pct"] for p in periods if p in fwd]
-        period_names = [period_labels[p] for p in periods if p in fwd]
-        fig_win = go.Figure(go.Bar(
-            x=period_names, y=pos_rates,
-            marker_color=["#00d4aa" if v >= 50 else "#ff4d6a" for v in pos_rates],
-            text=[f"%{f'{v:.0f}'.replace('.', ',')}" for v in pos_rates],
-            textposition="outside", textfont=dict(size=11, color="#c9d4e8", family="DM Mono, monospace"),
-            hovertemplate="%{x}<br>Pozitif oran: <b>%{y:.1f}%</b><extra></extra>"
-        ))
-        fig_win.add_hline(y=50, line_dash="dash", line_color="#2a4a7a", line_width=1,
-                          annotation_text="50%", annotation_font_color="#4a6080")
-        apply_base(fig_win, height=360,
-            title=dict(text="DÖNEM SONU POZİTİF KAPANIŞ ORANI", font=dict(size=11, color="#4a6080", family="DM Mono, monospace"), x=0),
-            yaxis=dict(gridcolor="#131c2e", ticksuffix="%", range=[0,105]),
-            xaxis=dict(gridcolor="#0d1220"), showlegend=False)
-        st.plotly_chart(fig_win, use_container_width=True)
-
-        st.markdown('<div class="section-label">◈ Eşik Hassasiyeti (21G Ort. Getiri vs Tetikleyici Eşik)</div>', unsafe_allow_html=True)
-        thresholds = np.arange(1.0, 12.0, 0.5)
-        means_21, counts_21 = [], []
-        for thr in thresholds:
-            f = forward_analysis(df, thr, [21])
-            if 21 in f and f[21]["n"] >= 5:
-                means_21.append(f[21]["mean"])
-                counts_21.append(f[21]["n"])
-            else:
-                means_21.append(np.nan)
-                counts_21.append(0)
-        fig_sens = make_subplots(specs=[[{"secondary_y": True}]])
-        fig_sens.add_trace(go.Scatter(x=thresholds, y=means_21, mode="lines+markers", name="Ort. 21G Getiri",
-            line=dict(color="#4a9eff", width=2), marker=dict(size=6),
-            hovertemplate="Eşik: %{x:.1f}%<br>Ort. 21G: <b>%{y:.2f}%</b><extra></extra>"), secondary_y=False)
-        fig_sens.add_trace(go.Bar(x=thresholds, y=counts_21, name="Örnek Sayısı",
-            marker_color="rgba(74,158,255,0.15)",
-            hovertemplate="Eşik: %{x:.1f}%<br>n: %{y}<extra></extra>"), secondary_y=True)
-        fig_sens.add_hline(y=0, line_color="#1e2d4a", line_width=1)
-        fig_sens.update_layout(
-            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(13,18,32,0.9)",
-            font=dict(color="#c9d4e8", family="DM Sans, sans-serif"), height=400,
-            title=dict(text="EŞİK HASSASIYETI — 21G ORTALAMA GETİRİ", font=dict(size=11, color="#4a6080", family="DM Mono, monospace"), x=0),
-            legend={**LEGEND_RIGHT},
-            margin=dict(l=50, r=120, t=50, b=40),
-            hoverlabel=dict(bgcolor="#0d1220", font_size=12, font_color="#e8f0ff"),
-            xaxis=dict(gridcolor="#131c2e", ticksuffix="%", tickfont=dict(size=10, color="#4a6080")),
-            yaxis=dict(gridcolor="#131c2e", ticksuffix="%", tickfont=dict(size=10, color="#4a6080")),
-            yaxis2=dict(gridcolor="#0d1220", tickfont=dict(size=9, color="#3a5070"), title=dict(text="n", font=dict(color="#3a5070")))
-        )
-        st.plotly_chart(fig_sens, use_container_width=True)
-
-# ════════════ TAB 4 ════════════
+# ════════════ TAB 4 — KÜMÜLATİF & PERFORMANS ════════════
 with tab4:
-    col_l, col_r = st.columns(2)
-    with col_l:
-        st.markdown('<div class="section-label">◈ Kümülatif Sıçrama Sayısı</div>', unsafe_allow_html=True)
-        cum_df = sicramalar.sort_values("Tarih").reset_index(drop=True)
-        cum_df["Kumulatif"] = range(1, len(cum_df)+1)
-        fig3 = go.Figure(go.Scatter(
-            x=cum_df["Tarih"], y=cum_df["Kumulatif"],
-            fill="tozeroy", line=dict(color="#4a9eff", width=1.5), fillcolor="rgba(74,158,255,0.06)",
-            hovertemplate="%{x|%d.%m.%Y}<br>Toplam: <b>%{y}</b> sıçrama<extra></extra>"
-        ))
-        apply_base(fig3, height=380,
-            title=dict(text="KÜMÜLATİF SIÇRAMA SAYISI", font=dict(size=11, color="#4a6080", family="DM Mono, monospace"), x=0),
-            xaxis=dict(gridcolor="#131c2e", tickformat="%b %Y"), yaxis=dict(gridcolor="#131c2e"))
-        st.plotly_chart(fig3, use_container_width=True)
-
-        st.markdown('<div class="section-label">◈ Aylara Göre Sıçrama</div>', unsafe_allow_html=True)
-        ay_order_tr = ["Ocak","Şubat","Mart","Nisan","Mayıs","Haziran","Temmuz","Ağustos","Eylül","Ekim","Kasım","Aralık"]
-        sicramalar["Ay_Adi_TR"] = sicramalar["Ay"].map(TR_AY_UZUN)
-        ay_sayim = sicramalar.groupby("Ay_Adi_TR").size().reindex(ay_order_tr).fillna(0)
-        fig4 = go.Figure(go.Bar(
-            x=ay_sayim.index, y=ay_sayim.values,
-            marker=dict(color=ay_sayim.values, colorscale=[[0,"#1e2d4a"],[1,"#4a9eff"]], line=dict(color="rgba(255,255,255,0.05)", width=1)),
-            hovertemplate="<b>%{x}</b><br>%{y} sıçrama<extra></extra>"
-        ))
-        apply_base(fig4, height=350,
-            title=dict(text="AYLARA GÖRE SIÇRAMA SAYISI", font=dict(size=11, color="#4a6080", family="DM Mono, monospace"), x=0),
-            xaxis=dict(gridcolor="#131c2e", tickfont=dict(size=10, color="#4a6080")),
-            yaxis=dict(gridcolor="#131c2e"), showlegend=False)
-        st.plotly_chart(fig4, use_container_width=True)
-
-    with col_r:
-        st.markdown('<div class="section-label">◈ Büyüklük Dağılımı</div>', unsafe_allow_html=True)
-        fig7 = go.Figure()
-        fig7.add_trace(go.Histogram(x=sicramalar[sicramalar["Yuzde_Degisim"]>0]["Yuzde_Degisim"],
-            nbinsx=25, name="↑ Pozitif", marker_color="#00d4aa", opacity=0.7,
-            hovertemplate="%{x:.1f}% — %{y} adet<extra></extra>"))
-        fig7.add_trace(go.Histogram(x=sicramalar[sicramalar["Yuzde_Degisim"]<0]["Yuzde_Degisim"],
-            nbinsx=25, name="↓ Negatif", marker_color="#ff4d6a", opacity=0.7,
-            hovertemplate="%{x:.1f}% — %{y} adet<extra></extra>"))
-        apply_base(fig7, height=380, barmode="overlay",
-            title=dict(text="SIÇRAMA BÜYÜKLÜKLERİ DAĞILIMI", font=dict(size=11, color="#4a6080", family="DM Mono, monospace"), x=0),
-            xaxis=dict(gridcolor="#131c2e", ticksuffix="%"), yaxis=dict(gridcolor="#131c2e"))
-        st.plotly_chart(fig7, use_container_width=True)
-
-        st.markdown('<div class="section-label">◈ Yıl–Ay Yoğunluk Haritası</div>', unsafe_allow_html=True)
-        pivot = sicramalar.groupby(["Yil","Ay"]).size().unstack(fill_value=0)
-        ay_labels = [TR_AY.get(c, str(c)) for c in pivot.columns]
-        fig8 = go.Figure(go.Heatmap(
-            z=pivot.values, x=ay_labels, y=pivot.index.astype(str),
-            colorscale=[[0,"#0d1220"],[0.5,"#1b6cf2"],[1,"#00d4aa"]],
-            text=pivot.values, texttemplate="%{text}",
-            textfont=dict(size=9, color="#e8f0ff", family="DM Mono, monospace"),
-            hovertemplate="<b>%{y} — %{x}</b><br>%{z} sıçrama<extra></extra>",
-            colorbar=dict(tickfont=dict(size=9, color="#4a6080"))
-        ))
-        apply_base(fig8, height=350,
-            title=dict(text="YIL–AY SIÇRAMA YOĞUNLUĞU", font=dict(size=11, color="#4a6080", family="DM Mono, monospace"), x=0),
-            xaxis=dict(side="bottom", tickfont=dict(size=11, color="#4a6080")),
-            yaxis=dict(tickfont=dict(size=11, color="#4a6080"), autorange="reversed"))
-        st.plotly_chart(fig8, use_container_width=True)
-
-    st.markdown('<div class="section-label">◈ Haftalık Pattern</div>', unsafe_allow_html=True)
-    gun_order_tr = ["Pazartesi","Salı","Çarşamba","Perşembe","Cuma","Cumartesi","Pazar"]
-    sicramalar["Gun_Adi_TR"] = sicramalar["Gun_Adi"].map(TR_GUN)
-    gun_sayim = sicramalar.groupby("Gun_Adi_TR").size().reindex(gun_order_tr).fillna(0)
-    fig5 = go.Figure(go.Bar(
-        x=gun_sayim.index, y=gun_sayim.values,
-        marker=dict(color=gun_sayim.values, colorscale=[[0,"#1e2d4a"],[1,"#b794f4"]], line=dict(color="rgba(255,255,255,0.05)", width=1)),
-        hovertemplate="<b>%{x}</b><br>%{y} sıçrama<extra></extra>"
-    ))
-    apply_base(fig5, height=340,
-        title=dict(text="HAFTANIN GÜNLERİNE GÖRE SIÇRAMA SAYISI", font=dict(size=11, color="#4a6080", family="DM Mono, monospace"), x=0),
-        xaxis=dict(gridcolor="#131c2e"), yaxis=dict(gridcolor="#131c2e"), showlegend=False)
-    st.plotly_chart(fig5, use_container_width=True)
-
-# ════════════ TAB 5 — SPREAD ANALİZİ ════════════
-with tab5:
-    st.markdown(f'<div class="section-label">◈ {doviz_sec}/TRY Alış–Satış Spread Analizi</div>', unsafe_allow_html=True)
-
-    if sp_df is None or len(sp_df) == 0:
-        st.warning("Spread verisi hesaplanamadı. Hem alış hem satış kolonları gereklidir.")
-    else:
-        sp_ort  = sp_df["Spread_TL"].mean()
-        sp_maks = sp_df["Spread_TL"].max()
-        sp_son  = sp_df["Spread_TL"].iloc[-1]
-        sp_pct  = sp_df["Spread_Pct"].mean()
-
-        st.markdown(f"""
-        <div class="metric-row" style="grid-template-columns: repeat(4, 1fr);">
-          <div class="spread-card">
-            <div class="metric-label">Son Spread (TL)</div>
-            <div class="metric-value metric-neu">{fkur(sp_son, 4)} ₺</div>
-            <div class="metric-sub">{sp_df['Tarih'].iloc[-1].strftime('%d.%m.%Y')}</div>
-          </div>
-          <div class="spread-card">
-            <div class="metric-label">Ort. Spread (TL)</div>
-            <div class="metric-value">{fkur(sp_ort, 4)} ₺</div>
-            <div class="metric-sub">Tarihsel ortalama</div>
-          </div>
-          <div class="spread-card">
-            <div class="metric-label">Maks Spread (TL)</div>
-            <div class="metric-value metric-neg">{fkur(sp_maks, 4)} ₺</div>
-            <div class="metric-sub">En yüksek spread</div>
-          </div>
-          <div class="spread-card">
-            <div class="metric-label">Ort. Spread (%)</div>
-            <div class="metric-value metric-pos">{fpct(sp_pct, 4)}</div>
-            <div class="metric-sub">Alış kuru üzerinden</div>
-          </div>
-        </div>
-        """, unsafe_allow_html=True)
-        st.markdown("<br>", unsafe_allow_html=True)
-
-        sp_df["_sp_str"]  = sp_df["Spread_TL"].apply(lambda x: tr_fmt_kur(x, 4))
-        sp_df["_spp_str"] = sp_df["Spread_Pct"].apply(lambda x: tr_fmt_pct(x, 4))
-
-        fig_sp1 = make_subplots(rows=2, cols=1, shared_xaxes=True,
-                                row_heights=[0.6, 0.4], vertical_spacing=0.06)
-
-        a_col = f"TP_DK_{doviz_sec}_A"
-        s_col = f"TP_DK_{doviz_sec}_S"
-        fig_sp1.add_trace(go.Scatter(
-            x=sp_df["Tarih"], y=sp_df[a_col], mode="lines", name="Alış",
-            line=dict(color="#4a9eff", width=1.2),
-            hovertemplate="%{x|%d.%m.%Y}<br>Alış: <b>%{y:.4f} ₺</b><extra></extra>"
-        ), row=1, col=1)
-        fig_sp1.add_trace(go.Scatter(
-            x=sp_df["Tarih"], y=sp_df[s_col], mode="lines", name="Satış",
-            line=dict(color="#ff4d6a", width=1.2),
-            fill="tonexty", fillcolor="rgba(255,77,106,0.05)",
-            hovertemplate="%{x|%d.%m.%Y}<br>Satış: <b>%{y:.4f} ₺</b><extra></extra>"
-        ), row=1, col=1)
-        fig_sp1.add_trace(go.Scatter(
-            x=sp_df["Tarih"], y=sp_df["Spread_TL"], mode="lines", name="Spread (TL)",
-            line=dict(color="#f6ad55", width=1),
-            fill="tozeroy", fillcolor="rgba(246,173,85,0.08)",
-            customdata=list(zip(sp_df["_sp_str"], sp_df["_spp_str"])),
-            hovertemplate="%{x|%d.%m.%Y}<br>Spread: <b>%{customdata[0]} ₺</b> (%{customdata[1]})<extra></extra>"
-        ), row=2, col=1)
-
-        fig_sp1.update_layout(
-            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(13,18,32,0.9)",
-            font=dict(color="#c9d4e8", family="DM Sans, sans-serif"), height=540,
-            title=dict(text=f"{doviz_sec}/TRY ALIŞ–SATIŞ & SPREAD", font=dict(size=11, color="#4a6080", family="DM Mono, monospace"), x=0),
-            legend={**LEGEND_RIGHT},
-            margin=dict(l=50, r=120, t=50, b=40),
-            hoverlabel=dict(bgcolor="#0d1220", font_size=12, font_color="#e8f0ff"),
-            xaxis2=dict(gridcolor="#131c2e", tickformat="%b %Y", tickfont=dict(size=10, color="#4a6080")),
-            xaxis=dict(gridcolor="#131c2e", tickformat="%b %Y", tickfont=dict(size=10, color="#4a6080")),
-            yaxis=dict(gridcolor="#131c2e", tickfont=dict(size=10, color="#4a6080")),
-            yaxis2=dict(gridcolor="#131c2e", tickfont=dict(size=10, color="#4a6080")),
-            hovermode="x unified"
-        )
-        st.plotly_chart(fig_sp1, use_container_width=True)
-
-        st.markdown('<div class="section-label">◈ Spread % & Yuvarlanmalı Ortalama</div>', unsafe_allow_html=True)
-        sp_df["Spread_MA20"] = sp_df["Spread_Pct"].rolling(20).mean()
-        sp_df["Spread_MA60"] = sp_df["Spread_Pct"].rolling(60).mean()
-
-        fig_sp2 = go.Figure()
-        fig_sp2.add_trace(go.Scatter(
-            x=sp_df["Tarih"], y=sp_df["Spread_Pct"], mode="lines", name="Spread %",
-            line=dict(color="#b794f4", width=0.8), opacity=0.5,
-            hovertemplate="%{x|%d.%m.%Y}<br>%{y:.4f}%<extra></extra>"
-        ))
-        fig_sp2.add_trace(go.Scatter(
-            x=sp_df["Tarih"], y=sp_df["Spread_MA20"], mode="lines", name="20G MA",
-            line=dict(color="#f6ad55", width=1.5),
-            hovertemplate="%{x|%d.%m.%Y}<br>20G MA: <b>%{y:.4f}%</b><extra></extra>"
-        ))
-        fig_sp2.add_trace(go.Scatter(
-            x=sp_df["Tarih"], y=sp_df["Spread_MA60"], mode="lines", name="60G MA",
-            line=dict(color="#4a9eff", width=1.5, dash="dot"),
-            hovertemplate="%{x|%d.%m.%Y}<br>60G MA: <b>%{y:.4f}%</b><extra></extra>"
-        ))
-        apply_base(fig_sp2, height=420,
-            title=dict(text="SPREAD % — YUVARLANMALI ORTALAMA", font=dict(size=11, color="#4a6080", family="DM Mono, monospace"), x=0),
-            xaxis=dict(gridcolor="#131c2e", tickformat="%b %Y"),
-            yaxis=dict(gridcolor="#131c2e", ticksuffix="%"),
-            hovermode="x unified")
-        st.plotly_chart(fig_sp2, use_container_width=True)
-
-        st.markdown('<div class="section-label">◈ USD vs EUR Spread Karşılaştırması</div>', unsafe_allow_html=True)
-        sp_usd = spread_hesapla(df_raw, "USD")
-        sp_eur = spread_hesapla(df_raw, "EUR")
-
-        if sp_usd is not None and sp_eur is not None:
-            fig_comp = go.Figure()
-            fig_comp.add_trace(go.Scatter(
-                x=sp_usd["Tarih"], y=sp_usd["Spread_Pct"], mode="lines", name="USD Spread %",
-                line=dict(color="#4a9eff", width=1.2),
-                hovertemplate="%{x|%d.%m.%Y}<br>USD Spread: <b>%{y:.4f}%</b><extra></extra>"
-            ))
-            fig_comp.add_trace(go.Scatter(
-                x=sp_eur["Tarih"], y=sp_eur["Spread_Pct"], mode="lines", name="EUR Spread %",
-                line=dict(color="#f6ad55", width=1.2),
-                hovertemplate="%{x|%d.%m.%Y}<br>EUR Spread: <b>%{y:.4f}%</b><extra></extra>"
-            ))
-            apply_base(fig_comp, height=400,
-                title=dict(text="USD vs EUR SPREAD % KARŞILAŞTIRMASI", font=dict(size=11, color="#4a6080", family="DM Mono, monospace"), x=0),
-                xaxis=dict(gridcolor="#131c2e", tickformat="%b %Y"),
-                yaxis=dict(gridcolor="#131c2e", ticksuffix="%"),
-                hovermode="x unified")
-            st.plotly_chart(fig_comp, use_container_width=True)
-        else:
-            st.info("USD ve EUR spread karşılaştırması için her iki dövizin alış/satış verisi gereklidir.")
-
-# ════════════ TAB 6 — TABLOLAR ════════════
-with tab6:
-
-    # ── Yardımcı: yön etiketi ──────────────────────────────────────────────
-    yon_label = {
-        "Tümü":              "Tümü",
-        "Yalnız Pozitif ↑":  "Yalnız ↑ Pozitif",
-        "Yalnız Negatif ↓":  "Yalnız ↓ Negatif",
-    }
-
-    # ── Aktif filtre banner ────────────────────────────────────────────────
-    esik_s   = str(esik).replace(".", ",")
-    hf_esik_s = str(haftalik_esik).replace(".", ",")
-    st.markdown(f"""
-    <div class="filter-banner">
-        🔎 &nbsp;Aktif Filtreler &nbsp;·&nbsp;
-        Günlük Eşik: <span class="filter-tag">≥ %{esik_s}</span>
-        Yön: <span class="filter-tag">{yon_label.get(yon, yon)}</span>
-        Gösterim: <span class="filter-tag">{gosterim_sec}</span>
-        &nbsp;&nbsp;|&nbsp;&nbsp;
-        Haftalık Eşik: <span class="filter-tag">≥ %{hf_esik_s}</span>
-        Haftalık Yön: <span class="filter-tag">{yon_label.get(haftalik_yon, haftalik_yon)}</span>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # ── Günlük sıçrama tablosu ─────────────────────────────────────────────
-    st.markdown(
-        f'<div class="section-label">◈ Sıçrama Tablosu '
-        f'<span style="color:#f6ad55;font-size:0.8rem;font-weight:400;">'
-        f'· Eşik ≥%{esik_s} · {yon_label.get(yon, yon)} · {gosterim_sec} kayıt'
-        f'</span></div>',
-        unsafe_allow_html=True
-    )
-    tbl = top_sic.copy().reset_index(drop=True)
-    tbl.index = tbl.index + 1
-    tbl_show = pd.DataFrame({
-        "#":           tbl.index,
-        "Tarih":       tbl["Tarih"].dt.strftime("%d.%m.%Y"),
-        "Yıl":         tbl["Yil"],
-        "Ay":          tbl["Ay_Adi"],
-        "Gün Adı":     tbl["Gun_Adi"].map(TR_GUN),
-        "Kur":         tbl["Dolar_Kuru"].apply(tr_fmt_kur),
-        "Önceki Kur":  tbl["Onceki_Kur"].apply(tr_fmt_kur),
-        "Değişim %":   tbl["Yuzde_Degisim"].apply(tr_fmt_pct),
-        "TL Δ":        tbl["TL_Degisim"].apply(lambda x: tr_fmt_kur(x, 4)),
-        "Gün Farkı":   tbl["Gun_Farki"].astype(int),
-    })
-    st.markdown(
-        f"<div style='font-size:0.75rem;color:#4a6080;font-family:DM Mono,monospace;"
-        f"margin-bottom:8px;'>Toplam <b style='color:#f6ad55'>{len(tbl_show)}</b> kayıt</div>",
-        unsafe_allow_html=True
-    )
-    st.dataframe(tbl_show, use_container_width=True, height=420)
-
-    # ── Aylık & Yıllık özetler ─────────────────────────────────────────────
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown(
-            f'<div class="section-label">◈ Aylık Özet '
-            f'<span style="color:#f6ad55;font-size:0.8rem;font-weight:400;">'
-            f'· Eşik ≥%{esik_s} · {yon_label.get(yon, yon)}'
-            f'</span></div>',
-            unsafe_allow_html=True
-        )
-        aylik = (
-            sicramalar
-            .groupby("Ay_Adi")["Abs_Degisim"]
-            .agg(["count", "mean", "max", "min"])
-            .round(3)
-        )
-        aylik.columns = ["Toplam", "Ort. %", "Maks %", "Min %"]
-        st.dataframe(aylik, use_container_width=True)
-
-    with c2:
-        st.markdown(
-            f'<div class="section-label">◈ Yıllık Özet '
-            f'<span style="color:#f6ad55;font-size:0.8rem;font-weight:400;">'
-            f'· Eşik ≥%{esik_s} · {yon_label.get(yon, yon)}'
-            f'</span></div>',
-            unsafe_allow_html=True
-        )
-        yillik = sicramalar.groupby("Yil").agg(
-            Toplam    = ("Abs_Degisim",     "count"),
-            Ort_Pct   = ("Abs_Degisim",     "mean"),
-            Pozitif   = ("Yuzde_Degisim",   lambda x: (x > 0).sum()),
-            Negatif   = ("Yuzde_Degisim",   lambda x: (x < 0).sum()),
-            Maks      = ("Abs_Degisim",     "max"),
-        ).round(3)
-        yillik.columns = ["Toplam", "Ort. %", "Pozitif", "Negatif", "Maks %"]
-        st.dataframe(yillik, use_container_width=True)
-
-    # ── Haftalık tablo — FİLTRELİ görünüm ────────────────────────────────
-    st.markdown(
-        f'<div class="section-label">◈ Haftalık Değişim Tablosu (Pzt → Cum) '
-        f'<span style="color:#f6ad55;font-size:0.8rem;font-weight:400;">'
-        f'· Eşik ≥%{hf_esik_s} · {yon_label.get(haftalik_yon, haftalik_yon)}'
-        f'</span></div>',
-        unsafe_allow_html=True
-    )
-
-    # Haftalık yön + eşik filtresini tabloya uygula
-    if haftalik_yon == "Yalnız Pozitif ↑":
-        hf_tablo = hf_global[hf_global["HaftaDegisim"] >= haftalik_esik].copy()
-    elif haftalik_yon == "Yalnız Negatif ↓":
-        hf_tablo = hf_global[hf_global["HaftaDegisim"] <= -haftalik_esik].copy()
-    else:
-        hf_tablo = hf_global[hf_global["HaftaDegisim"].abs() >= haftalik_esik].copy()
-
-    def _hf_df_hazirla(kaynak):
-        t = kaynak[["PztTarih", "CumTarih", "PztKur", "CumKur", "HaftaDegisim"]].copy()
-        t.insert(0, "Yıl",   t["PztTarih"].dt.year)
-        t.insert(1, "Hafta", t["PztTarih"].dt.strftime("%d.%m.%Y") + " – " + t["CumTarih"].dt.strftime("%d.%m.%Y"))
-        t["Pzt Kur"]   = t["PztKur"].apply(tr_fmt_kur)
-        t["Cum Kur"]   = t["CumKur"].apply(tr_fmt_kur)
-        t["Değişim %"] = t["HaftaDegisim"].apply(tr_fmt_pct)
-        t["Yön"]       = t["HaftaDegisim"].apply(lambda x: "↑" if x > 0 else "↓")
-        t = (
-            t[["Yıl", "Hafta", "Pzt Kur", "Cum Kur", "Değişim %", "Yön"]]
-            .sort_values("Hafta", ascending=False)
-            .reset_index(drop=True)
-        )
-        t.index = t.index + 1
-        return t
-
-    hf_t          = _hf_df_hazirla(hf_tablo)   # filtreli — ekranda göster
-    hf_t_tumumu   = _hf_df_hazirla(hf_global)  # filtresiz — indirme için
-
-    st.markdown(
-        f"<div style='font-size:0.75rem;color:#4a6080;font-family:DM Mono,monospace;"
-        f"margin-bottom:8px;'>Filtreli: <b style='color:#f6ad55'>{len(hf_t)}</b> hafta "
-        f"&nbsp;·&nbsp; Toplam: <b style='color:#4a9eff'>{len(hf_t_tumumu)}</b> hafta</div>",
-        unsafe_allow_html=True
-    )
-    st.dataframe(hf_t, use_container_width=True, height=420)
-
-    # ── Haftalık TÜM VERİ indirme ─────────────────────────────────────────
-    hf_bas_yil = int(hf_global["PztTarih"].dt.year.min())
-    hf_bit_yil = int(hf_global["CumTarih"].dt.year.max())
-    hf_bit_ay  = hf_global["CumTarih"].max().strftime("%d.%m.%Y")
-    st.markdown(
-        '<div class="section-label">◈ Haftalık Tüm Veri İndir '
-        '<span style="color:#4a9eff;font-size:0.8rem;font-weight:400;">'
-        '· Filtre uygulanmadan, tüm haftalar'
-        '</span></div>',
-        unsafe_allow_html=True
-    )
-    st.markdown(
-        f"<div style='font-size:0.75rem;color:#4a6080;font-family:DM Mono,monospace;"
-        f"margin-bottom:12px;'>{hf_bas_yil}–{hf_bit_yil} · Son kapanış {hf_bit_ay} · "
-        f"<b style='color:#4a9eff'>{len(hf_t_tumumu)}</b> haftalık kapanış verisi</div>",
-        unsafe_allow_html=True
-    )
-
-    hf_dl1, hf_dl2, _ = st.columns([1, 1, 4])
-    with hf_dl1:
-        csv_hf_tum = hf_t_tumumu.to_csv(index=False).encode("utf-8-sig")
-        st.download_button(
-            "⬇ Haftalık CSV (Tümü)",
-            csv_hf_tum,
-            "haftalik_tum_veri.csv",
-            "text/csv",
-            use_container_width=True,
-        )
-    with hf_dl2:
-        buf_hf = io.BytesIO()
-        with pd.ExcelWriter(buf_hf, engine="openpyxl") as w:
-            hf_t_tumumu.to_excel(w, sheet_name="Haftalik_Tum", index=False)
-            hf_t.to_excel(       w, sheet_name="Haftalik_Filtreli", index=False)
-        st.download_button(
-            "⬇ Haftalık Excel (Tümü)",
-            buf_hf.getvalue(),
-            "haftalik_tum_veri.xlsx",
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-        )
-
-    # ── Genel dışa aktar ─────────────────────────────────────────────────
-    st.markdown('<div class="section-label">◈ Tüm Analizi Dışa Aktar</div>', unsafe_allow_html=True)
-    dc1, dc2 = st.columns(2)
-    with dc1:
-        csv = top_sic.to_csv(index=False).encode("utf-8-sig")
-        st.download_button("⬇ Sıçramalar CSV", csv, "sicramalar.csv", "text/csv", use_container_width=True)
-    with dc2:
-        # Kümülatif (günlük) — tüm veri üzerinden
-        _cum_gun = df[["Tarih","Yil","Dolar_Kuru","Yuzde_Degisim"]].copy()
-        _cum_gun = _cum_gun.sort_values("Tarih").reset_index(drop=True)
-        _cum_gun["Kumülatif_%"] = (_cum_gun["Dolar_Kuru"] / _cum_gun["Dolar_Kuru"].iloc[0] - 1) * 100
-        _cum_gun["Drawdown_%"] = _cum_gun["Kumülatif_%"] - _cum_gun["Kumülatif_%"].cummax()
-        _cum_gun["Tarih"] = _cum_gun["Tarih"].dt.strftime("%d.%m.%Y")
-        _cum_gun = _cum_gun.rename(columns={"Dolar_Kuru":"Kur","Yuzde_Degisim":"Degisim_%"})
-
-        # Kümülatif (haftalık)
-        _cum_hf = hf_global[["PztTarih","CumTarih","PztKur","CumKur","HaftaDegisim"]].copy()
-        _cum_hf = _cum_hf.sort_values("CumTarih").reset_index(drop=True)
-        _cum_hf["Kumülatif_%"] = (_cum_hf["CumKur"] / _cum_hf["CumKur"].iloc[0] - 1) * 100
-        _cum_hf["Drawdown_%"] = _cum_hf["Kumülatif_%"] - _cum_hf["Kumülatif_%"].cummax()
-        _cum_hf["Hafta"] = _cum_hf["PztTarih"].dt.strftime("%d.%m.%Y") + " – " + _cum_hf["CumTarih"].dt.strftime("%d.%m.%Y")
-        _cum_hf = _cum_hf[["Hafta","CumKur","HaftaDegisim","Kumülatif_%","Drawdown_%"]]
-        _cum_hf.columns = ["Hafta","Kur","HaftaDegisim_%","Kumülatif_%","Drawdown_%"]
-
-        # Mevsimsellik (ay bazlı ort. günlük getiri)
-        _mevs = df.groupby("Ay")["Yuzde_Degisim"].mean().reset_index()
-        _mevs["AyAdi"] = _mevs["Ay"].map(TR_AY_UZUN)
-        _mevs = _mevs[["AyAdi","Yuzde_Degisim"]].rename(columns={"Yuzde_Degisim":"OrtGunlukGetiri_%"})
-
-        buf = io.BytesIO()
-        with pd.ExcelWriter(buf, engine="openpyxl") as w:
-            top_sic.to_excel(    w, sheet_name="Sicramalar",        index=False)
-            hf_t_tumumu.to_excel(w, sheet_name="Haftalik_Tum",      index=False)
-            hf_t.to_excel(       w, sheet_name="Haftalik_Filtreli",  index=False)
-            df.to_excel(         w, sheet_name="Tum_Gunluk_Veri",   index=False)
-            _cum_gun.to_excel(   w, sheet_name="Kumulatif_Gunluk",  index=False)
-            _cum_hf.to_excel(    w, sheet_name="Kumulatif_Haftalik", index=False)
-            _mevs.to_excel(      w, sheet_name="Mevsimsellik",       index=False)
-            aylik.to_excel(      w, sheet_name="Aylik")
-            yillik.to_excel(     w, sheet_name="Yillik")
-            if sp_df is not None:
-                sp_df.to_excel(  w, sheet_name="Spread",            index=False)
-        st.download_button(
-            "⬇ Excel İndir (Tüm Analiz)",
-            buf.getvalue(),
-            "doviz_analiz_tam.xlsx",
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-        )
-
-# ════════════ TAB 7 — KÜMÜLATİF & PERFORMANS ════════════
-with tab7:
 
     # ── CSS ───────────────────────────────────────────────────────────────
     st.markdown("""<style>
@@ -2405,3 +1880,526 @@ st.markdown("""
     TCMB EVDS · USDTRY / EURTRY ANALİZ PLATFORMU · STREAMLIT + PLOTLY
 </div>
 """, unsafe_allow_html=True)
+with tab5:
+    st.markdown(f'<div class="section-label">◈ Büyük Sıçramalardan Sonra Ne Oluyor? (≥%{fwd_threshold})</div>', unsafe_allow_html=True)
+    periods = [1, 5, 10, 21, 63]
+    period_labels = {1:"1G", 5:"5G (1Hf)", 10:"10G (2Hf)", 21:"21G (1Ay)", 63:"63G (3Ay)"}
+    fwd = forward_analysis(df, fwd_threshold, periods)
+
+    if not fwd:
+        st.warning(f"%{fwd_threshold} eşiğinde yeterli sıçrama bulunamadı.")
+    else:
+        cards_html = ""
+        for p in periods:
+            if p in fwd:
+                r = fwd[p]
+                mean_cls = "metric-pos" if r["mean"] >= 0 else "metric-neg"
+                sign = "+" if r["mean"] >= 0 else ""
+                cards_html += f"""
+                <div class="forward-card">
+                  <div class="forward-title">{period_labels[p]} Sonra</div>
+                  <div class="forward-big {mean_cls}">{sign}{f"{r['mean']:.2f}".replace('.',',')}%</div>
+                  <div class="forward-detail">
+                    <span style="color:#4a6080">Medyan:</span> <span class="forward-accent">{'+' if r['median']>=0 else ''}{f"{r['median']:.2f}".replace('.',',')}%</span><br>
+                    <span style="color:#4a6080">Pozitif oran:</span> <span class="forward-accent">%{r['pos_pct']:.0f}</span><br>
+                    <span style="color:#4a6080">IQR:</span> <span class="forward-accent">{f"{r['p25']:.2f}".replace('.',',')}% — {f"{r['p75']:.2f}".replace('.',',')}%</span><br>
+                    <span style="color:#4a6080">Örnek:</span> <span class="forward-accent">{r['n']}</span>
+                  </div>
+                </div>"""
+        st.markdown(f'<div class="forward-grid">{cards_html}</div>', unsafe_allow_html=True)
+
+        st.markdown('<div class="section-label">◈ Dağılım (Box Plot)</div>', unsafe_allow_html=True)
+        fig_box = go.Figure()
+        colors_box = ["#4a9eff","#00d4aa","#f6ad55","#b794f4","#ff4d6a"]
+        for i, p in enumerate(periods):
+            if p in fwd:
+                c = colors_box[i]
+                rr, gg, bb = int(c[1:3],16), int(c[3:5],16), int(c[5:7],16)
+                fig_box.add_trace(go.Box(y=fwd[p]["raw"], name=period_labels[p], marker_color=c,
+                    boxpoints="outliers", line_width=1.5, fillcolor=f"rgba({rr},{gg},{bb},0.1)",
+                    hovertemplate="%{y:.3f}%<extra></extra>"))
+        fig_box.add_hline(y=0, line_color="#1e2d4a", line_width=1, line_dash="dash")
+        apply_base(fig_box, height=480,
+            title=dict(text=f"%{fwd_threshold}+ SIÇRAMA SONRASI GETİRİ DAĞILIMI", font=dict(size=11, color="#4a6080", family="DM Mono, monospace"), x=0),
+            yaxis=dict(gridcolor="#131c2e", ticksuffix="%"),
+            xaxis=dict(gridcolor="#0d1220"))
+        st.plotly_chart(fig_box, use_container_width=True)
+
+        st.markdown('<div class="section-label">◈ Pozitif Kapanış Oranı (Her Dönem)</div>', unsafe_allow_html=True)
+        pos_rates    = [fwd[p]["pos_pct"] for p in periods if p in fwd]
+        period_names = [period_labels[p] for p in periods if p in fwd]
+        fig_win = go.Figure(go.Bar(
+            x=period_names, y=pos_rates,
+            marker_color=["#00d4aa" if v >= 50 else "#ff4d6a" for v in pos_rates],
+            text=[f"%{f'{v:.0f}'.replace('.', ',')}" for v in pos_rates],
+            textposition="outside", textfont=dict(size=11, color="#c9d4e8", family="DM Mono, monospace"),
+            hovertemplate="%{x}<br>Pozitif oran: <b>%{y:.1f}%</b><extra></extra>"
+        ))
+        fig_win.add_hline(y=50, line_dash="dash", line_color="#2a4a7a", line_width=1,
+                          annotation_text="50%", annotation_font_color="#4a6080")
+        apply_base(fig_win, height=360,
+            title=dict(text="DÖNEM SONU POZİTİF KAPANIŞ ORANI", font=dict(size=11, color="#4a6080", family="DM Mono, monospace"), x=0),
+            yaxis=dict(gridcolor="#131c2e", ticksuffix="%", range=[0,105]),
+            xaxis=dict(gridcolor="#0d1220"), showlegend=False)
+        st.plotly_chart(fig_win, use_container_width=True)
+
+        st.markdown('<div class="section-label">◈ Eşik Hassasiyeti (21G Ort. Getiri vs Tetikleyici Eşik)</div>', unsafe_allow_html=True)
+        thresholds = np.arange(1.0, 12.0, 0.5)
+        means_21, counts_21 = [], []
+        for thr in thresholds:
+            f = forward_analysis(df, thr, [21])
+            if 21 in f and f[21]["n"] >= 5:
+                means_21.append(f[21]["mean"])
+                counts_21.append(f[21]["n"])
+            else:
+                means_21.append(np.nan)
+                counts_21.append(0)
+        fig_sens = make_subplots(specs=[[{"secondary_y": True}]])
+        fig_sens.add_trace(go.Scatter(x=thresholds, y=means_21, mode="lines+markers", name="Ort. 21G Getiri",
+            line=dict(color="#4a9eff", width=2), marker=dict(size=6),
+            hovertemplate="Eşik: %{x:.1f}%<br>Ort. 21G: <b>%{y:.2f}%</b><extra></extra>"), secondary_y=False)
+        fig_sens.add_trace(go.Bar(x=thresholds, y=counts_21, name="Örnek Sayısı",
+            marker_color="rgba(74,158,255,0.15)",
+            hovertemplate="Eşik: %{x:.1f}%<br>n: %{y}<extra></extra>"), secondary_y=True)
+        fig_sens.add_hline(y=0, line_color="#1e2d4a", line_width=1)
+        fig_sens.update_layout(
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(13,18,32,0.9)",
+            font=dict(color="#c9d4e8", family="DM Sans, sans-serif"), height=400,
+            title=dict(text="EŞİK HASSASIYETI — 21G ORTALAMA GETİRİ", font=dict(size=11, color="#4a6080", family="DM Mono, monospace"), x=0),
+            legend={**LEGEND_RIGHT},
+            margin=dict(l=50, r=120, t=50, b=40),
+            hoverlabel=dict(bgcolor="#0d1220", font_size=12, font_color="#e8f0ff"),
+            xaxis=dict(gridcolor="#131c2e", ticksuffix="%", tickfont=dict(size=10, color="#4a6080")),
+            yaxis=dict(gridcolor="#131c2e", ticksuffix="%", tickfont=dict(size=10, color="#4a6080")),
+            yaxis2=dict(gridcolor="#0d1220", tickfont=dict(size=9, color="#3a5070"), title=dict(text="n", font=dict(color="#3a5070")))
+        )
+        st.plotly_chart(fig_sens, use_container_width=True)
+
+    col_l, col_r = st.columns(2)
+    with col_l:
+        st.markdown('<div class="section-label">◈ Kümülatif Sıçrama Sayısı</div>', unsafe_allow_html=True)
+        cum_df = sicramalar.sort_values("Tarih").reset_index(drop=True)
+        cum_df["Kumulatif"] = range(1, len(cum_df)+1)
+        fig3 = go.Figure(go.Scatter(
+            x=cum_df["Tarih"], y=cum_df["Kumulatif"],
+            fill="tozeroy", line=dict(color="#4a9eff", width=1.5), fillcolor="rgba(74,158,255,0.06)",
+            hovertemplate="%{x|%d.%m.%Y}<br>Toplam: <b>%{y}</b> sıçrama<extra></extra>"
+        ))
+        apply_base(fig3, height=380,
+            title=dict(text="KÜMÜLATİF SIÇRAMA SAYISI", font=dict(size=11, color="#4a6080", family="DM Mono, monospace"), x=0),
+            xaxis=dict(gridcolor="#131c2e", tickformat="%b %Y"), yaxis=dict(gridcolor="#131c2e"))
+        st.plotly_chart(fig3, use_container_width=True)
+
+        st.markdown('<div class="section-label">◈ Aylara Göre Sıçrama</div>', unsafe_allow_html=True)
+        ay_order_tr = ["Ocak","Şubat","Mart","Nisan","Mayıs","Haziran","Temmuz","Ağustos","Eylül","Ekim","Kasım","Aralık"]
+        sicramalar["Ay_Adi_TR"] = sicramalar["Ay"].map(TR_AY_UZUN)
+        ay_sayim = sicramalar.groupby("Ay_Adi_TR").size().reindex(ay_order_tr).fillna(0)
+        fig4 = go.Figure(go.Bar(
+            x=ay_sayim.index, y=ay_sayim.values,
+            marker=dict(color=ay_sayim.values, colorscale=[[0,"#1e2d4a"],[1,"#4a9eff"]], line=dict(color="rgba(255,255,255,0.05)", width=1)),
+            hovertemplate="<b>%{x}</b><br>%{y} sıçrama<extra></extra>"
+        ))
+        apply_base(fig4, height=350,
+            title=dict(text="AYLARA GÖRE SIÇRAMA SAYISI", font=dict(size=11, color="#4a6080", family="DM Mono, monospace"), x=0),
+            xaxis=dict(gridcolor="#131c2e", tickfont=dict(size=10, color="#4a6080")),
+            yaxis=dict(gridcolor="#131c2e"), showlegend=False)
+        st.plotly_chart(fig4, use_container_width=True)
+
+    with col_r:
+        st.markdown('<div class="section-label">◈ Büyüklük Dağılımı</div>', unsafe_allow_html=True)
+        fig7 = go.Figure()
+        fig7.add_trace(go.Histogram(x=sicramalar[sicramalar["Yuzde_Degisim"]>0]["Yuzde_Degisim"],
+            nbinsx=25, name="↑ Pozitif", marker_color="#00d4aa", opacity=0.7,
+            hovertemplate="%{x:.1f}% — %{y} adet<extra></extra>"))
+        fig7.add_trace(go.Histogram(x=sicramalar[sicramalar["Yuzde_Degisim"]<0]["Yuzde_Degisim"],
+            nbinsx=25, name="↓ Negatif", marker_color="#ff4d6a", opacity=0.7,
+            hovertemplate="%{x:.1f}% — %{y} adet<extra></extra>"))
+        apply_base(fig7, height=380, barmode="overlay",
+            title=dict(text="SIÇRAMA BÜYÜKLÜKLERİ DAĞILIMI", font=dict(size=11, color="#4a6080", family="DM Mono, monospace"), x=0),
+            xaxis=dict(gridcolor="#131c2e", ticksuffix="%"), yaxis=dict(gridcolor="#131c2e"))
+        st.plotly_chart(fig7, use_container_width=True)
+
+        st.markdown('<div class="section-label">◈ Yıl–Ay Yoğunluk Haritası</div>', unsafe_allow_html=True)
+        pivot = sicramalar.groupby(["Yil","Ay"]).size().unstack(fill_value=0)
+        ay_labels = [TR_AY.get(c, str(c)) for c in pivot.columns]
+        fig8 = go.Figure(go.Heatmap(
+            z=pivot.values, x=ay_labels, y=pivot.index.astype(str),
+            colorscale=[[0,"#0d1220"],[0.5,"#1b6cf2"],[1,"#00d4aa"]],
+            text=pivot.values, texttemplate="%{text}",
+            textfont=dict(size=9, color="#e8f0ff", family="DM Mono, monospace"),
+            hovertemplate="<b>%{y} — %{x}</b><br>%{z} sıçrama<extra></extra>",
+            colorbar=dict(tickfont=dict(size=9, color="#4a6080"))
+        ))
+        apply_base(fig8, height=350,
+            title=dict(text="YIL–AY SIÇRAMA YOĞUNLUĞU", font=dict(size=11, color="#4a6080", family="DM Mono, monospace"), x=0),
+            xaxis=dict(side="bottom", tickfont=dict(size=11, color="#4a6080")),
+            yaxis=dict(tickfont=dict(size=11, color="#4a6080"), autorange="reversed"))
+        st.plotly_chart(fig8, use_container_width=True)
+
+    st.markdown('<div class="section-label">◈ Haftalık Pattern</div>', unsafe_allow_html=True)
+    gun_order_tr = ["Pazartesi","Salı","Çarşamba","Perşembe","Cuma","Cumartesi","Pazar"]
+    sicramalar["Gun_Adi_TR"] = sicramalar["Gun_Adi"].map(TR_GUN)
+    gun_sayim = sicramalar.groupby("Gun_Adi_TR").size().reindex(gun_order_tr).fillna(0)
+    fig5 = go.Figure(go.Bar(
+        x=gun_sayim.index, y=gun_sayim.values,
+        marker=dict(color=gun_sayim.values, colorscale=[[0,"#1e2d4a"],[1,"#b794f4"]], line=dict(color="rgba(255,255,255,0.05)", width=1)),
+        hovertemplate="<b>%{x}</b><br>%{y} sıçrama<extra></extra>"
+    ))
+    apply_base(fig5, height=340,
+        title=dict(text="HAFTANIN GÜNLERİNE GÖRE SIÇRAMA SAYISI", font=dict(size=11, color="#4a6080", family="DM Mono, monospace"), x=0),
+        xaxis=dict(gridcolor="#131c2e"), yaxis=dict(gridcolor="#131c2e"), showlegend=False)
+    st.plotly_chart(fig5, use_container_width=True)
+# ════════════ TAB 6 — TABLOLAR & SPREAD ════════════
+with tab6:
+    st.markdown(f'<div class="section-label">◈ {doviz_sec}/TRY Alış–Satış Spread Analizi</div>', unsafe_allow_html=True)
+
+    if sp_df is None or len(sp_df) == 0:
+        st.warning("Spread verisi hesaplanamadı. Hem alış hem satış kolonları gereklidir.")
+    else:
+        sp_ort  = sp_df["Spread_TL"].mean()
+        sp_maks = sp_df["Spread_TL"].max()
+        sp_son  = sp_df["Spread_TL"].iloc[-1]
+        sp_pct  = sp_df["Spread_Pct"].mean()
+
+        st.markdown(f"""
+        <div class="metric-row" style="grid-template-columns: repeat(4, 1fr);">
+          <div class="spread-card">
+            <div class="metric-label">Son Spread (TL)</div>
+            <div class="metric-value metric-neu">{fkur(sp_son, 4)} ₺</div>
+            <div class="metric-sub">{sp_df['Tarih'].iloc[-1].strftime('%d.%m.%Y')}</div>
+          </div>
+          <div class="spread-card">
+            <div class="metric-label">Ort. Spread (TL)</div>
+            <div class="metric-value">{fkur(sp_ort, 4)} ₺</div>
+            <div class="metric-sub">Tarihsel ortalama</div>
+          </div>
+          <div class="spread-card">
+            <div class="metric-label">Maks Spread (TL)</div>
+            <div class="metric-value metric-neg">{fkur(sp_maks, 4)} ₺</div>
+            <div class="metric-sub">En yüksek spread</div>
+          </div>
+          <div class="spread-card">
+            <div class="metric-label">Ort. Spread (%)</div>
+            <div class="metric-value metric-pos">{fpct(sp_pct, 4)}</div>
+            <div class="metric-sub">Alış kuru üzerinden</div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        sp_df["_sp_str"]  = sp_df["Spread_TL"].apply(lambda x: tr_fmt_kur(x, 4))
+        sp_df["_spp_str"] = sp_df["Spread_Pct"].apply(lambda x: tr_fmt_pct(x, 4))
+
+        fig_sp1 = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                                row_heights=[0.6, 0.4], vertical_spacing=0.06)
+
+        a_col = f"TP_DK_{doviz_sec}_A"
+        s_col = f"TP_DK_{doviz_sec}_S"
+        fig_sp1.add_trace(go.Scatter(
+            x=sp_df["Tarih"], y=sp_df[a_col], mode="lines", name="Alış",
+            line=dict(color="#4a9eff", width=1.2),
+            hovertemplate="%{x|%d.%m.%Y}<br>Alış: <b>%{y:.4f} ₺</b><extra></extra>"
+        ), row=1, col=1)
+        fig_sp1.add_trace(go.Scatter(
+            x=sp_df["Tarih"], y=sp_df[s_col], mode="lines", name="Satış",
+            line=dict(color="#ff4d6a", width=1.2),
+            fill="tonexty", fillcolor="rgba(255,77,106,0.05)",
+            hovertemplate="%{x|%d.%m.%Y}<br>Satış: <b>%{y:.4f} ₺</b><extra></extra>"
+        ), row=1, col=1)
+        fig_sp1.add_trace(go.Scatter(
+            x=sp_df["Tarih"], y=sp_df["Spread_TL"], mode="lines", name="Spread (TL)",
+            line=dict(color="#f6ad55", width=1),
+            fill="tozeroy", fillcolor="rgba(246,173,85,0.08)",
+            customdata=list(zip(sp_df["_sp_str"], sp_df["_spp_str"])),
+            hovertemplate="%{x|%d.%m.%Y}<br>Spread: <b>%{customdata[0]} ₺</b> (%{customdata[1]})<extra></extra>"
+        ), row=2, col=1)
+
+        fig_sp1.update_layout(
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(13,18,32,0.9)",
+            font=dict(color="#c9d4e8", family="DM Sans, sans-serif"), height=540,
+            title=dict(text=f"{doviz_sec}/TRY ALIŞ–SATIŞ & SPREAD", font=dict(size=11, color="#4a6080", family="DM Mono, monospace"), x=0),
+            legend={**LEGEND_RIGHT},
+            margin=dict(l=50, r=120, t=50, b=40),
+            hoverlabel=dict(bgcolor="#0d1220", font_size=12, font_color="#e8f0ff"),
+            xaxis2=dict(gridcolor="#131c2e", tickformat="%b %Y", tickfont=dict(size=10, color="#4a6080")),
+            xaxis=dict(gridcolor="#131c2e", tickformat="%b %Y", tickfont=dict(size=10, color="#4a6080")),
+            yaxis=dict(gridcolor="#131c2e", tickfont=dict(size=10, color="#4a6080")),
+            yaxis2=dict(gridcolor="#131c2e", tickfont=dict(size=10, color="#4a6080")),
+            hovermode="x unified"
+        )
+        st.plotly_chart(fig_sp1, use_container_width=True)
+
+        st.markdown('<div class="section-label">◈ Spread % & Yuvarlanmalı Ortalama</div>', unsafe_allow_html=True)
+        sp_df["Spread_MA20"] = sp_df["Spread_Pct"].rolling(20).mean()
+        sp_df["Spread_MA60"] = sp_df["Spread_Pct"].rolling(60).mean()
+
+        fig_sp2 = go.Figure()
+        fig_sp2.add_trace(go.Scatter(
+            x=sp_df["Tarih"], y=sp_df["Spread_Pct"], mode="lines", name="Spread %",
+            line=dict(color="#b794f4", width=0.8), opacity=0.5,
+            hovertemplate="%{x|%d.%m.%Y}<br>%{y:.4f}%<extra></extra>"
+        ))
+        fig_sp2.add_trace(go.Scatter(
+            x=sp_df["Tarih"], y=sp_df["Spread_MA20"], mode="lines", name="20G MA",
+            line=dict(color="#f6ad55", width=1.5),
+            hovertemplate="%{x|%d.%m.%Y}<br>20G MA: <b>%{y:.4f}%</b><extra></extra>"
+        ))
+        fig_sp2.add_trace(go.Scatter(
+            x=sp_df["Tarih"], y=sp_df["Spread_MA60"], mode="lines", name="60G MA",
+            line=dict(color="#4a9eff", width=1.5, dash="dot"),
+            hovertemplate="%{x|%d.%m.%Y}<br>60G MA: <b>%{y:.4f}%</b><extra></extra>"
+        ))
+        apply_base(fig_sp2, height=420,
+            title=dict(text="SPREAD % — YUVARLANMALI ORTALAMA", font=dict(size=11, color="#4a6080", family="DM Mono, monospace"), x=0),
+            xaxis=dict(gridcolor="#131c2e", tickformat="%b %Y"),
+            yaxis=dict(gridcolor="#131c2e", ticksuffix="%"),
+            hovermode="x unified")
+        st.plotly_chart(fig_sp2, use_container_width=True)
+
+        st.markdown('<div class="section-label">◈ USD vs EUR Spread Karşılaştırması</div>', unsafe_allow_html=True)
+        sp_usd = spread_hesapla(df_raw, "USD")
+        sp_eur = spread_hesapla(df_raw, "EUR")
+
+        if sp_usd is not None and sp_eur is not None:
+            fig_comp = go.Figure()
+            fig_comp.add_trace(go.Scatter(
+                x=sp_usd["Tarih"], y=sp_usd["Spread_Pct"], mode="lines", name="USD Spread %",
+                line=dict(color="#4a9eff", width=1.2),
+                hovertemplate="%{x|%d.%m.%Y}<br>USD Spread: <b>%{y:.4f}%</b><extra></extra>"
+            ))
+            fig_comp.add_trace(go.Scatter(
+                x=sp_eur["Tarih"], y=sp_eur["Spread_Pct"], mode="lines", name="EUR Spread %",
+                line=dict(color="#f6ad55", width=1.2),
+                hovertemplate="%{x|%d.%m.%Y}<br>EUR Spread: <b>%{y:.4f}%</b><extra></extra>"
+            ))
+            apply_base(fig_comp, height=400,
+                title=dict(text="USD vs EUR SPREAD % KARŞILAŞTIRMASI", font=dict(size=11, color="#4a6080", family="DM Mono, monospace"), x=0),
+                xaxis=dict(gridcolor="#131c2e", tickformat="%b %Y"),
+                yaxis=dict(gridcolor="#131c2e", ticksuffix="%"),
+                hovermode="x unified")
+            st.plotly_chart(fig_comp, use_container_width=True)
+        else:
+            st.info("USD ve EUR spread karşılaştırması için her iki dövizin alış/satış verisi gereklidir.")
+
+    # ── Yardımcı: yön etiketi ──────────────────────────────────────────────
+    yon_label = {
+        "Tümü":              "Tümü",
+        "Yalnız Pozitif ↑":  "Yalnız ↑ Pozitif",
+        "Yalnız Negatif ↓":  "Yalnız ↓ Negatif",
+    }
+
+    # ── Aktif filtre banner ────────────────────────────────────────────────
+    esik_s   = str(esik).replace(".", ",")
+    hf_esik_s = str(haftalik_esik).replace(".", ",")
+    st.markdown(f"""
+    <div class="filter-banner">
+        🔎 &nbsp;Aktif Filtreler &nbsp;·&nbsp;
+        Günlük Eşik: <span class="filter-tag">≥ %{esik_s}</span>
+        Yön: <span class="filter-tag">{yon_label.get(yon, yon)}</span>
+        Gösterim: <span class="filter-tag">{gosterim_sec}</span>
+        &nbsp;&nbsp;|&nbsp;&nbsp;
+        Haftalık Eşik: <span class="filter-tag">≥ %{hf_esik_s}</span>
+        Haftalık Yön: <span class="filter-tag">{yon_label.get(haftalik_yon, haftalik_yon)}</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Günlük sıçrama tablosu ─────────────────────────────────────────────
+    st.markdown(
+        f'<div class="section-label">◈ Sıçrama Tablosu '
+        f'<span style="color:#f6ad55;font-size:0.8rem;font-weight:400;">'
+        f'· Eşik ≥%{esik_s} · {yon_label.get(yon, yon)} · {gosterim_sec} kayıt'
+        f'</span></div>',
+        unsafe_allow_html=True
+    )
+    tbl = top_sic.copy().reset_index(drop=True)
+    tbl.index = tbl.index + 1
+    tbl_show = pd.DataFrame({
+        "#":           tbl.index,
+        "Tarih":       tbl["Tarih"].dt.strftime("%d.%m.%Y"),
+        "Yıl":         tbl["Yil"],
+        "Ay":          tbl["Ay_Adi"],
+        "Gün Adı":     tbl["Gun_Adi"].map(TR_GUN),
+        "Kur":         tbl["Dolar_Kuru"].apply(tr_fmt_kur),
+        "Önceki Kur":  tbl["Onceki_Kur"].apply(tr_fmt_kur),
+        "Değişim %":   tbl["Yuzde_Degisim"].apply(tr_fmt_pct),
+        "TL Δ":        tbl["TL_Degisim"].apply(lambda x: tr_fmt_kur(x, 4)),
+        "Gün Farkı":   tbl["Gun_Farki"].astype(int),
+    })
+    st.markdown(
+        f"<div style='font-size:0.75rem;color:#4a6080;font-family:DM Mono,monospace;"
+        f"margin-bottom:8px;'>Toplam <b style='color:#f6ad55'>{len(tbl_show)}</b> kayıt</div>",
+        unsafe_allow_html=True
+    )
+    st.dataframe(tbl_show, use_container_width=True, height=420)
+
+    # ── Aylık & Yıllık özetler ─────────────────────────────────────────────
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown(
+            f'<div class="section-label">◈ Aylık Özet '
+            f'<span style="color:#f6ad55;font-size:0.8rem;font-weight:400;">'
+            f'· Eşik ≥%{esik_s} · {yon_label.get(yon, yon)}'
+            f'</span></div>',
+            unsafe_allow_html=True
+        )
+        aylik = (
+            sicramalar
+            .groupby("Ay_Adi")["Abs_Degisim"]
+            .agg(["count", "mean", "max", "min"])
+            .round(3)
+        )
+        aylik.columns = ["Toplam", "Ort. %", "Maks %", "Min %"]
+        st.dataframe(aylik, use_container_width=True)
+
+    with c2:
+        st.markdown(
+            f'<div class="section-label">◈ Yıllık Özet '
+            f'<span style="color:#f6ad55;font-size:0.8rem;font-weight:400;">'
+            f'· Eşik ≥%{esik_s} · {yon_label.get(yon, yon)}'
+            f'</span></div>',
+            unsafe_allow_html=True
+        )
+        yillik = sicramalar.groupby("Yil").agg(
+            Toplam    = ("Abs_Degisim",     "count"),
+            Ort_Pct   = ("Abs_Degisim",     "mean"),
+            Pozitif   = ("Yuzde_Degisim",   lambda x: (x > 0).sum()),
+            Negatif   = ("Yuzde_Degisim",   lambda x: (x < 0).sum()),
+            Maks      = ("Abs_Degisim",     "max"),
+        ).round(3)
+        yillik.columns = ["Toplam", "Ort. %", "Pozitif", "Negatif", "Maks %"]
+        st.dataframe(yillik, use_container_width=True)
+
+    # ── Haftalık tablo — FİLTRELİ görünüm ────────────────────────────────
+    st.markdown(
+        f'<div class="section-label">◈ Haftalık Değişim Tablosu (Pzt → Cum) '
+        f'<span style="color:#f6ad55;font-size:0.8rem;font-weight:400;">'
+        f'· Eşik ≥%{hf_esik_s} · {yon_label.get(haftalik_yon, haftalik_yon)}'
+        f'</span></div>',
+        unsafe_allow_html=True
+    )
+
+    # Haftalık yön + eşik filtresini tabloya uygula
+    if haftalik_yon == "Yalnız Pozitif ↑":
+        hf_tablo = hf_global[hf_global["HaftaDegisim"] >= haftalik_esik].copy()
+    elif haftalik_yon == "Yalnız Negatif ↓":
+        hf_tablo = hf_global[hf_global["HaftaDegisim"] <= -haftalik_esik].copy()
+    else:
+        hf_tablo = hf_global[hf_global["HaftaDegisim"].abs() >= haftalik_esik].copy()
+
+    def _hf_df_hazirla(kaynak):
+        t = kaynak[["PztTarih", "CumTarih", "PztKur", "CumKur", "HaftaDegisim"]].copy()
+        t.insert(0, "Yıl",   t["PztTarih"].dt.year)
+        t.insert(1, "Hafta", t["PztTarih"].dt.strftime("%d.%m.%Y") + " – " + t["CumTarih"].dt.strftime("%d.%m.%Y"))
+        t["Pzt Kur"]   = t["PztKur"].apply(tr_fmt_kur)
+        t["Cum Kur"]   = t["CumKur"].apply(tr_fmt_kur)
+        t["Değişim %"] = t["HaftaDegisim"].apply(tr_fmt_pct)
+        t["Yön"]       = t["HaftaDegisim"].apply(lambda x: "↑" if x > 0 else "↓")
+        t = (
+            t[["Yıl", "Hafta", "Pzt Kur", "Cum Kur", "Değişim %", "Yön"]]
+            .sort_values("Hafta", ascending=False)
+            .reset_index(drop=True)
+        )
+        t.index = t.index + 1
+        return t
+
+    hf_t          = _hf_df_hazirla(hf_tablo)   # filtreli — ekranda göster
+    hf_t_tumumu   = _hf_df_hazirla(hf_global)  # filtresiz — indirme için
+
+    st.markdown(
+        f"<div style='font-size:0.75rem;color:#4a6080;font-family:DM Mono,monospace;"
+        f"margin-bottom:8px;'>Filtreli: <b style='color:#f6ad55'>{len(hf_t)}</b> hafta "
+        f"&nbsp;·&nbsp; Toplam: <b style='color:#4a9eff'>{len(hf_t_tumumu)}</b> hafta</div>",
+        unsafe_allow_html=True
+    )
+    st.dataframe(hf_t, use_container_width=True, height=420)
+
+    # ── Haftalık TÜM VERİ indirme ─────────────────────────────────────────
+    hf_bas_yil = int(hf_global["PztTarih"].dt.year.min())
+    hf_bit_yil = int(hf_global["CumTarih"].dt.year.max())
+    hf_bit_ay  = hf_global["CumTarih"].max().strftime("%d.%m.%Y")
+    st.markdown(
+        '<div class="section-label">◈ Haftalık Tüm Veri İndir '
+        '<span style="color:#4a9eff;font-size:0.8rem;font-weight:400;">'
+        '· Filtre uygulanmadan, tüm haftalar'
+        '</span></div>',
+        unsafe_allow_html=True
+    )
+    st.markdown(
+        f"<div style='font-size:0.75rem;color:#4a6080;font-family:DM Mono,monospace;"
+        f"margin-bottom:12px;'>{hf_bas_yil}–{hf_bit_yil} · Son kapanış {hf_bit_ay} · "
+        f"<b style='color:#4a9eff'>{len(hf_t_tumumu)}</b> haftalık kapanış verisi</div>",
+        unsafe_allow_html=True
+    )
+
+    hf_dl1, hf_dl2, _ = st.columns([1, 1, 4])
+    with hf_dl1:
+        csv_hf_tum = hf_t_tumumu.to_csv(index=False).encode("utf-8-sig")
+        st.download_button(
+            "⬇ Haftalık CSV (Tümü)",
+            csv_hf_tum,
+            "haftalik_tum_veri.csv",
+            "text/csv",
+            use_container_width=True,
+        )
+    with hf_dl2:
+        buf_hf = io.BytesIO()
+        with pd.ExcelWriter(buf_hf, engine="openpyxl") as w:
+            hf_t_tumumu.to_excel(w, sheet_name="Haftalik_Tum", index=False)
+            hf_t.to_excel(       w, sheet_name="Haftalik_Filtreli", index=False)
+        st.download_button(
+            "⬇ Haftalık Excel (Tümü)",
+            buf_hf.getvalue(),
+            "haftalik_tum_veri.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
+
+    # ── Genel dışa aktar ─────────────────────────────────────────────────
+    st.markdown('<div class="section-label">◈ Tüm Analizi Dışa Aktar</div>', unsafe_allow_html=True)
+    dc1, dc2 = st.columns(2)
+    with dc1:
+        csv = top_sic.to_csv(index=False).encode("utf-8-sig")
+        st.download_button("⬇ Sıçramalar CSV", csv, "sicramalar.csv", "text/csv", use_container_width=True)
+    with dc2:
+        # Kümülatif (günlük) — tüm veri üzerinden
+        _cum_gun = df[["Tarih","Yil","Dolar_Kuru","Yuzde_Degisim"]].copy()
+        _cum_gun = _cum_gun.sort_values("Tarih").reset_index(drop=True)
+        _cum_gun["Kumülatif_%"] = (_cum_gun["Dolar_Kuru"] / _cum_gun["Dolar_Kuru"].iloc[0] - 1) * 100
+        _cum_gun["Drawdown_%"] = _cum_gun["Kumülatif_%"] - _cum_gun["Kumülatif_%"].cummax()
+        _cum_gun["Tarih"] = _cum_gun["Tarih"].dt.strftime("%d.%m.%Y")
+        _cum_gun = _cum_gun.rename(columns={"Dolar_Kuru":"Kur","Yuzde_Degisim":"Degisim_%"})
+
+        # Kümülatif (haftalık)
+        _cum_hf = hf_global[["PztTarih","CumTarih","PztKur","CumKur","HaftaDegisim"]].copy()
+        _cum_hf = _cum_hf.sort_values("CumTarih").reset_index(drop=True)
+        _cum_hf["Kumülatif_%"] = (_cum_hf["CumKur"] / _cum_hf["CumKur"].iloc[0] - 1) * 100
+        _cum_hf["Drawdown_%"] = _cum_hf["Kumülatif_%"] - _cum_hf["Kumülatif_%"].cummax()
+        _cum_hf["Hafta"] = _cum_hf["PztTarih"].dt.strftime("%d.%m.%Y") + " – " + _cum_hf["CumTarih"].dt.strftime("%d.%m.%Y")
+        _cum_hf = _cum_hf[["Hafta","CumKur","HaftaDegisim","Kumülatif_%","Drawdown_%"]]
+        _cum_hf.columns = ["Hafta","Kur","HaftaDegisim_%","Kumülatif_%","Drawdown_%"]
+
+        # Mevsimsellik (ay bazlı ort. günlük getiri)
+        _mevs = df.groupby("Ay")["Yuzde_Degisim"].mean().reset_index()
+        _mevs["AyAdi"] = _mevs["Ay"].map(TR_AY_UZUN)
+        _mevs = _mevs[["AyAdi","Yuzde_Degisim"]].rename(columns={"Yuzde_Degisim":"OrtGunlukGetiri_%"})
+
+        buf = io.BytesIO()
+        with pd.ExcelWriter(buf, engine="openpyxl") as w:
+            top_sic.to_excel(    w, sheet_name="Sicramalar",        index=False)
+            hf_t_tumumu.to_excel(w, sheet_name="Haftalik_Tum",      index=False)
+            hf_t.to_excel(       w, sheet_name="Haftalik_Filtreli",  index=False)
+            df.to_excel(         w, sheet_name="Tum_Gunluk_Veri",   index=False)
+            _cum_gun.to_excel(   w, sheet_name="Kumulatif_Gunluk",  index=False)
+            _cum_hf.to_excel(    w, sheet_name="Kumulatif_Haftalik", index=False)
+            _mevs.to_excel(      w, sheet_name="Mevsimsellik",       index=False)
+            aylik.to_excel(      w, sheet_name="Aylik")
+            yillik.to_excel(     w, sheet_name="Yillik")
+            if sp_df is not None:
+                sp_df.to_excel(  w, sheet_name="Spread",            index=False)
+        st.download_button(
+            "⬇ Excel İndir (Tüm Analiz)",
+            buf.getvalue(),
+            "doviz_analiz_tam.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
