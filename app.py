@@ -395,10 +395,6 @@ def spread_hesapla(df_raw, doviz="USD"):
 
 
 def forward_analysis(df, threshold, periods):
-    """
-    Güvenli forward analiz: df her zaman reset_index ile kullanılır,
-    iloc ile indeks hatası oluşmaz.
-    """
     df_r = df.reset_index(drop=True)
     mask = df_r["Abs_Degisim"] >= threshold
     event_positions = df_r.index[mask].tolist()
@@ -425,6 +421,134 @@ def forward_analysis(df, threshold, periods):
                 "raw":     arr.tolist()
             }
     return results
+
+
+# ─── HAFTALIK VERİ (7 TAKVİM GÜNÜ: Pzt→Paz) ─────────────────────────────────
+def haftalik_veri_hesapla(df):
+    """
+    Haftalık periyot: ISO hafta numarası bazında (Pazartesi → Pazar).
+    Haftanın ilk işlem günü açılış kuru, son işlem günü kapanış kuru kullanılır.
+    Değişim = (kapanış / açılış - 1) * 100
+    """
+    df_h = df.copy()
+    df_h["ISOYil"]   = df_h["Tarih"].dt.isocalendar().year.astype(int)
+    df_h["ISOHafta"] = df_h["Tarih"].dt.isocalendar().week.astype(int)
+
+    _hf_ilk = df_h.groupby(["ISOYil","ISOHafta"]).agg(
+        AcilisTarih=("Tarih", "min"),
+        AcilisKur=("Dolar_Kuru", "first")
+    ).reset_index()
+
+    _hf_son = df_h.groupby(["ISOYil","ISOHafta"]).agg(
+        KapanisTarih=("Tarih", "max"),
+        KapanisKur=("Dolar_Kuru", "last")
+    ).reset_index()
+
+    hf = _hf_ilk.merge(_hf_son, on=["ISOYil","ISOHafta"])
+
+    # Haftalık değişim: (Kapanış / Açılış - 1) * 100
+    hf["HaftaDegisim"] = (hf["KapanisKur"] / hf["AcilisKur"] - 1) * 100
+    hf["XTarih"]       = hf["KapanisTarih"]
+
+    # Gösterim için aralık etiketi (Pazartesi–Pazar takvim aralığı)
+    hf["HaftaBaslangic"] = hf["AcilisTarih"].apply(
+        lambda t: t - pd.Timedelta(days=t.weekday())  # Pazartesi
+    )
+    hf["HaftaBitis"] = hf["HaftaBaslangic"] + pd.Timedelta(days=6)  # Pazar
+
+    hf["Aralik"] = (
+        hf["HaftaBaslangic"].dt.strftime("%d.%m") + "–" +
+        hf["HaftaBitis"].dt.strftime("%d.%m.%y") +
+        " (Pzt–Paz)"
+    )
+    hf["IslemAralik"] = (
+        hf["AcilisTarih"].dt.strftime("%d.%m") + "–" +
+        hf["KapanisTarih"].dt.strftime("%d.%m.%y") +
+        " (işlem)"
+    )
+
+    hf["AbsDegisim"] = hf["HaftaDegisim"].abs()
+    hf = hf.dropna(subset=["HaftaDegisim"]).reset_index(drop=True)
+    hf["_acs_str"] = hf["AcilisKur"].apply(tr_fmt_kur)
+    hf["_kap_str"] = hf["KapanisKur"].apply(tr_fmt_kur)
+    hf["_hf_str"]  = hf["HaftaDegisim"].apply(tr_fmt_pct)
+
+    return hf
+
+
+# ─── AYLIK VERİ (Ay başı → Ay sonu) ─────────────────────────────────────────
+def aylik_veri_hesapla(df):
+    """
+    Aylık periyot: Her ayın ilk işlem günü → son işlem günü.
+    Değişim = (ay sonu kuru / ay başı kuru - 1) * 100
+    """
+    df_a = df.copy()
+    df_a["Yil"] = df_a["Tarih"].dt.year
+    df_a["Ay"]  = df_a["Tarih"].dt.month
+
+    _ay_ilk = df_a.groupby(["Yil","Ay"]).agg(
+        AcilisTarih=("Tarih", "min"),
+        AcilisKur=("Dolar_Kuru", "first")
+    ).reset_index()
+
+    _ay_son = df_a.groupby(["Yil","Ay"]).agg(
+        KapanisTarih=("Tarih", "max"),
+        KapanisKur=("Dolar_Kuru", "last")
+    ).reset_index()
+
+    ay = _ay_ilk.merge(_ay_son, on=["Yil","Ay"])
+    ay["AyDegisim"] = (ay["KapanisKur"] / ay["AcilisKur"] - 1) * 100
+    ay["AbsDegisim"] = ay["AyDegisim"].abs()
+    ay["XTarih"] = ay["KapanisTarih"]
+    ay["AyAdi"] = ay["Ay"].map(TR_AY_UZUN)
+    ay["Aralik"] = ay["AyAdi"] + " " + ay["Yil"].astype(str)
+    ay = ay.dropna(subset=["AyDegisim"]).reset_index(drop=True)
+    ay["_acs_str"] = ay["AcilisKur"].apply(tr_fmt_kur)
+    ay["_kap_str"] = ay["KapanisKur"].apply(tr_fmt_kur)
+    ay["_ay_str"]  = ay["AyDegisim"].apply(tr_fmt_pct)
+
+    return ay
+
+
+# ─── ÇEYREKLİK VERİ (Çeyrek başı → Çeyrek sonu) ─────────────────────────────
+def ceyreklik_veri_hesapla(df):
+    """
+    Çeyreklik periyot: Her çeyreğin ilk işlem günü → son işlem günü.
+    Q1: Ocak–Mart, Q2: Nisan–Haziran, Q3: Temmuz–Eylül, Q4: Ekim–Aralık
+    Değişim = (çeyrek sonu kuru / çeyrek başı kuru - 1) * 100
+    """
+    df_c = df.copy()
+    df_c["Yil"]    = df_c["Tarih"].dt.year
+    df_c["Ceyrek"] = df_c["Tarih"].dt.quarter
+
+    _c_ilk = df_c.groupby(["Yil","Ceyrek"]).agg(
+        AcilisTarih=("Tarih", "min"),
+        AcilisKur=("Dolar_Kuru", "first")
+    ).reset_index()
+
+    _c_son = df_c.groupby(["Yil","Ceyrek"]).agg(
+        KapanisTarih=("Tarih", "max"),
+        KapanisKur=("Dolar_Kuru", "last")
+    ).reset_index()
+
+    cey = _c_ilk.merge(_c_son, on=["Yil","Ceyrek"])
+    cey["CeyrekDegisim"] = (cey["KapanisKur"] / cey["AcilisKur"] - 1) * 100
+    cey["AbsDegisim"] = cey["CeyrekDegisim"].abs()
+    cey["XTarih"] = cey["KapanisTarih"]
+    cey["CeyrekAdi"] = "Q" + cey["Ceyrek"].astype(str) + " " + cey["Yil"].astype(str)
+
+    # Çeyrek ay aralığı
+    _ceyrek_aylar = {1: "Oca–Mar", 2: "Nis–Haz", 3: "Tem–Eyl", 4: "Eki–Ara"}
+    cey["Aralik"] = cey.apply(
+        lambda r: f"Q{int(r['Ceyrek'])} {int(r['Yil'])} ({_ceyrek_aylar[int(r['Ceyrek'])]})", axis=1
+    )
+    cey = cey.dropna(subset=["CeyrekDegisim"]).reset_index(drop=True)
+    cey["_acs_str"] = cey["AcilisKur"].apply(tr_fmt_kur)
+    cey["_kap_str"] = cey["KapanisKur"].apply(tr_fmt_kur)
+    cey["_cey_str"] = cey["CeyrekDegisim"].apply(tr_fmt_pct)
+
+    return cey
+
 
 # ─── HEADER ──────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -497,6 +621,11 @@ with st.sidebar:
         letter-spacing:0.15em;color:#1b6cf2;padding:20px 0 12px 0;border-bottom:1px solid #1e2d4a;">
         ◈ Haftalık / Gün Analizi</div>""", unsafe_allow_html=True)
     st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("""<div style="font-size:0.7rem;color:#4a9eff;font-family:'DM Mono',monospace;
+        background:rgba(27,108,242,0.08);border:1px solid rgba(27,108,242,0.2);border-radius:4px;
+        padding:6px 10px;margin-bottom:10px;">
+        📅 Haftalık = Pazartesi açılış → Pazar kapanış (7 takvim günü)
+    </div>""", unsafe_allow_html=True)
     haftalik_esik   = st.slider("Haftalık Sıçrama Eşiği (%)", 0.0, 20.0, 3.0, 0.5)
     haftalik_etiket = st.slider("Haftalık — Etiketlenecek Dilim (%)", 10, 100, 40, 5)
     haftalik_yon    = st.radio("Haftalık Yön", ["Tümü", "Yalnız Pozitif ↑", "Yalnız Negatif ↓"], key="haftalik_yon")
@@ -585,20 +714,14 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# ─── HAFTALIK VERİ ───────────────────────────────────────────────────────────
-df["ISOYil"]   = df["Tarih"].dt.isocalendar().year.astype(int)
-df["ISOHafta"] = df["Tarih"].dt.isocalendar().week.astype(int)
-_hf_ilk = df.groupby(["ISOYil","ISOHafta"]).agg(PztTarih=("Tarih","min"), PztKur=("Dolar_Kuru","first")).reset_index()
-_hf_son = df.groupby(["ISOYil","ISOHafta"]).agg(CumTarih=("Tarih","max"), CumKur=("Dolar_Kuru","last")).reset_index()
-hf_global = _hf_ilk.merge(_hf_son, on=["ISOYil","ISOHafta"])
-hf_global["HaftaDegisim"] = (hf_global["CumKur"] / hf_global["PztKur"] - 1) * 100
-hf_global["XTarih"]       = hf_global["CumTarih"]
-hf_global["Aralik"]       = hf_global["PztTarih"].dt.strftime("%d.%m") + "–" + hf_global["CumTarih"].dt.strftime("%d.%m.%y")
-hf_global["AbsDegisim"]   = hf_global["HaftaDegisim"].abs()
-hf_global = hf_global.dropna(subset=["HaftaDegisim"]).reset_index(drop=True)
-hf_global["_pzt_str"] = hf_global["PztKur"].apply(tr_fmt_kur)
-hf_global["_cum_str"] = hf_global["CumKur"].apply(tr_fmt_kur)
-hf_global["_hf_str"]  = hf_global["HaftaDegisim"].apply(tr_fmt_pct)
+# ─── HAFTALIK VERİ (7 TAKVİM GÜNÜ) ──────────────────────────────────────────
+hf_global = haftalik_veri_hesapla(df)
+
+# ─── AYLIK VERİ ──────────────────────────────────────────────────────────────
+ay_global = aylik_veri_hesapla(df)
+
+# ─── ÇEYREKLİK VERİ ──────────────────────────────────────────────────────────
+cey_global = ceyreklik_veri_hesapla(df)
 
 # ─── SPREAD VERİSİ ───────────────────────────────────────────────────────────
 sp_df = spread_hesapla(df_raw, doviz_sec)
@@ -721,7 +844,6 @@ with tab1:
                   <div class="jump-meta">+{int(r['Gun_Farki'])} gün arayla</div>
                 </div>""", unsafe_allow_html=True)
 
-    # ── Günlük Sıçrama Tablosu & İndir ────────────────────────────────────
     esik_s_t1 = str(esik).replace(".", ",")
     yon_label_t1 = {
         "Tümü":             "Tümü",
@@ -856,7 +978,14 @@ with tab2:
         xaxis=dict(gridcolor="#0d1220"))
     st.plotly_chart(fig_vio, use_container_width=True)
 
-    st.markdown('<div class="section-label">◈ Haftalık Değişim — Pazartesi → Cuma</div>', unsafe_allow_html=True)
+    # ════ HAFTALIK DEĞİŞİM (7 TAKVİM GÜNÜ: Pzt→Paz) ══════════════════════
+    st.markdown("""
+    <div class="section-label">◈ Haftalık Değişim — Pazartesi Açılış → Pazar Kapanış (7 Takvim Günü)
+        <span style="color:#4a9eff;font-size:0.75rem;font-weight:400;margin-left:8px;">
+        · ISO hafta bazlı · ilk işlem günü açılış → son işlem günü kapanış
+        </span>
+    </div>""", unsafe_allow_html=True)
+
     hf = hf_global.copy()
     if haftalik_yon == "Yalnız Pozitif ↑":
         hf_sic = hf[hf["HaftaDegisim"] >= haftalik_esik].copy()
@@ -876,7 +1005,7 @@ with tab2:
         thr = sub["HaftaDegisim"].quantile(1 - haftalik_etiket/100) if is_pos else sub["HaftaDegisim"].quantile(haftalik_etiket/100)
         def mk_lbl(r):
             cond = r["HaftaDegisim"] >= thr if is_pos else r["HaftaDegisim"] <= thr
-            return f"{r['Aralik']} {tr_fmt_pct(r['HaftaDegisim'],1)}" if cond else ""
+            return f"{r['IslemAralik']} {tr_fmt_pct(r['HaftaDegisim'],1)}" if cond else ""
         sub["_lbl"] = sub.apply(mk_lbl, axis=1)
         return sub
 
@@ -887,8 +1016,8 @@ with tab2:
     fig_hw.add_trace(go.Scatter(
         x=hf["XTarih"], y=hf["HaftaDegisim"], mode="lines", name="Haftalık Δ",
         line=dict(color="#2a4a7a", width=1), opacity=0.6,
-        customdata=list(zip(hf["Aralik"], hf["_pzt_str"], hf["_cum_str"], hf["_hf_str"])),
-        hovertemplate="<b>%{customdata[0]}</b><br>Pzt: %{customdata[1]} ₺ → Cum: %{customdata[2]} ₺<br>%{customdata[3]}<extra></extra>"
+        customdata=list(zip(hf["Aralik"], hf["IslemAralik"], hf["_acs_str"], hf["_kap_str"], hf["_hf_str"])),
+        hovertemplate="<b>%{customdata[0]}</b><br>İşlem: %{customdata[1]}<br>Açılış: %{customdata[2]} ₺ → Kapanış: %{customdata[3]} ₺<br>%{customdata[4]}<extra></extra>"
     ))
     for subset, color, name, tpos, sym, tpl_color in [
         (hf_pos_sc, "#00d4aa", "↑ Pozitif", "top right",    "triangle-up",   "#00d4aa"),
@@ -897,17 +1026,14 @@ with tab2:
         if len(subset) == 0:
             continue
         s = subset.copy()
-        s["_ps"] = s["PztKur"].apply(tr_fmt_kur)
-        s["_cs"] = s["CumKur"].apply(tr_fmt_kur)
-        s["_hs"] = s["HaftaDegisim"].apply(tr_fmt_pct)
         fig_hw.add_trace(go.Scatter(
             x=s["XTarih"], y=s["HaftaDegisim"], mode="markers+text", name=name,
             marker=dict(color=color, size=s["AbsDegisim"]*1.8+5, symbol=sym,
                         line=dict(color=color, width=2), opacity=0.9),
             text=s["_lbl"], textposition=tpos,
             textfont=dict(size=8, color=color, family="DM Mono, monospace"),
-            customdata=list(zip(s["Aralik"], s["_ps"], s["_cs"], s["_hs"])),
-            hovertemplate=f"<b>%{{customdata[0]}}</b><br>Pzt: %{{customdata[1]}} ₺ → Cum: %{{customdata[2]}} ₺<br><b style='color:{tpl_color}'>%{{customdata[3]}}</b><extra></extra>"
+            customdata=list(zip(s["Aralik"], s["IslemAralik"], s["_acs_str"], s["_kap_str"], s["_hf_str"])),
+            hovertemplate=f"<b>%{{customdata[0]}}</b><br>İşlem: %{{customdata[1]}}<br>Açılış: %{{customdata[2]}} ₺ → Kapanış: %{{customdata[3]}} ₺<br><b style='color:{tpl_color}'>%{{customdata[4]}}</b><extra></extra>"
         ))
 
     tv_hf, tt_hf = safe_ticks(hf["HaftaDegisim"].min(), hf["HaftaDegisim"].max(), n=10, decimals=1, suffix="%")
@@ -918,7 +1044,7 @@ with tab2:
                      annotation_text=f"−{he_str}%", annotation_font_color="#ff4d6a", annotation_font_size=10)
     fig_hw.add_hline(y=0, line_color="#2a4a7a", line_width=1)
     apply_base(fig_hw, height=520,
-        title=dict(text=f"HAFTALIK DEĞİŞİM (Pzt→Cum) · Eşik ±%{haftalik_esik} · Etiket top %{haftalik_etiket}",
+        title=dict(text=f"HAFTALIK DEĞİŞİM (Pzt Açılış→Paz Kapanış, 7 Gün) · Eşik ±%{haftalik_esik} · Etiket top %{haftalik_etiket}",
                    font=dict(size=11, color="#4a6080", family="DM Mono, monospace"), x=0),
         xaxis=dict(gridcolor="#131c2e", tickformat="%b %Y", tickfont=dict(size=10, color="#4a6080"),
                    showspikes=True, spikecolor="#2a4a7a", spikethickness=1, spikedash="dot"),
@@ -937,7 +1063,7 @@ with tab2:
       <div class="metric-card" style="border-top:2px solid #4a9eff;">
         <div class="metric-label">Haftalık Ort.</div>
         <div class="metric-value metric-{'pos' if hf_ort>=0 else 'neg'}">{sign_hf}{f'{hf_ort:.3f}'.replace('.',',')}%</div>
-        <div class="metric-sub">Pzt→Cum ort.</div></div>
+        <div class="metric-sub">Pzt açılış→Paz kapanış ort.</div></div>
       <div class="metric-card" style="border-top:2px solid #00d4aa;">
         <div class="metric-label">≥ +%{he_str} hafta</div>
         <div class="metric-value metric-pos">{hf_pos_n}</div>
@@ -955,8 +1081,115 @@ with tab2:
     </div>""", unsafe_allow_html=True)
     st.markdown("<br>", unsafe_allow_html=True)
 
+    # ════ AYLIK DEĞİŞİM BAR CHART ════════════════════════════════════════
+    st.markdown("""
+    <div class="section-label">◈ Aylık Değişim — Ay Başı → Ay Sonu
+        <span style="color:#4a9eff;font-size:0.75rem;font-weight:400;margin-left:8px;">
+        · Her ayın ilk işlem günü açılış → son işlem günü kapanış
+        </span>
+    </div>""", unsafe_allow_html=True)
+
+    ay = ay_global.copy()
+    ay["renk"] = ay["AyDegisim"].apply(lambda x: "#00d4aa" if x >= 0 else "#ff4d6a")
+    fig_ay_bar = go.Figure()
+    fig_ay_bar.add_trace(go.Bar(
+        x=ay["XTarih"], y=ay["AyDegisim"],
+        marker_color=ay["renk"].values, opacity=0.85,
+        customdata=list(zip(ay["Aralik"], ay["_acs_str"], ay["_kap_str"], ay["_ay_str"])),
+        hovertemplate="<b>%{customdata[0]}</b><br>Açılış: %{customdata[1]} ₺ → Kapanış: %{customdata[2]} ₺<br>Değişim: <b>%{customdata[3]}</b><extra></extra>"
+    ))
+    fig_ay_bar.add_hline(y=0, line_color="#2a4a7a", line_width=1)
+    tv_ay, tt_ay = safe_ticks(ay["AyDegisim"].min(), ay["AyDegisim"].max(), n=8, decimals=1, suffix="%")
+    apply_base(fig_ay_bar, height=380,
+        title=dict(text="AYLIK DEĞİŞİM (Ay Başı→Ay Sonu) · Her ayın ilk işlem günü → son işlem günü",
+                   font=dict(size=11, color="#4a6080", family="DM Mono, monospace"), x=0),
+        xaxis=dict(gridcolor="#131c2e", tickformat="%b %Y", tickfont=dict(size=10, color="#4a6080")),
+        yaxis={**yt(tv_ay, tt_ay, {"gridcolor":"#131c2e","tickfont":dict(size=10,color="#4a6080"), "ticksuffix":"%"})},
+        showlegend=False, hovermode="closest")
+    st.plotly_chart(fig_ay_bar, use_container_width=True)
+
+    ay_ort  = ay["AyDegisim"].mean()
+    ay_maks = ay["AyDegisim"].max()
+    ay_mins = ay["AyDegisim"].min()
+    ay_poz  = (ay["AyDegisim"] > 0).sum()
+    ay_neg  = (ay["AyDegisim"] < 0).sum()
+    sign_ay = "+" if ay_ort >= 0 else ""
+    st.markdown(f"""
+    <div class="metric-row" style="grid-template-columns: repeat(5, 1fr);">
+      <div class="metric-card" style="border-top:2px solid #4a9eff;">
+        <div class="metric-label">Aylık Ort.</div>
+        <div class="metric-value metric-{'pos' if ay_ort>=0 else 'neg'}">{sign_ay}{f'{ay_ort:.3f}'.replace('.',',')}%</div>
+        <div class="metric-sub">Ay başı→ay sonu ort.</div></div>
+      <div class="metric-card" style="border-top:2px solid #00d4aa;">
+        <div class="metric-label">Pozitif Ay</div>
+        <div class="metric-value metric-pos">{ay_poz}</div></div>
+      <div class="metric-card" style="border-top:2px solid #ff4d6a;">
+        <div class="metric-label">Negatif Ay</div>
+        <div class="metric-value metric-neg">{ay_neg}</div></div>
+      <div class="metric-card">
+        <div class="metric-label">En İyi Ay</div>
+        <div class="metric-value metric-pos">+{f'{ay_maks:.2f}'.replace('.',',')}%</div></div>
+      <div class="metric-card">
+        <div class="metric-label">En Kötü Ay</div>
+        <div class="metric-value metric-neg">{f'{ay_mins:.2f}'.replace('.',',')}%</div></div>
+    </div>""", unsafe_allow_html=True)
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ════ ÇEYREKLİK DEĞİŞİM BAR CHART ════════════════════════════════════
+    st.markdown("""
+    <div class="section-label">◈ Çeyreklik Değişim — Çeyrek Başı → Çeyrek Sonu
+        <span style="color:#4a9eff;font-size:0.75rem;font-weight:400;margin-left:8px;">
+        · Q1: Oca–Mar · Q2: Nis–Haz · Q3: Tem–Eyl · Q4: Eki–Ara
+        </span>
+    </div>""", unsafe_allow_html=True)
+
+    cey = cey_global.copy()
+    cey["renk"] = cey["CeyrekDegisim"].apply(lambda x: "#00d4aa" if x >= 0 else "#ff4d6a")
+    fig_cey_bar = go.Figure()
+    fig_cey_bar.add_trace(go.Bar(
+        x=cey["XTarih"], y=cey["CeyrekDegisim"],
+        marker_color=cey["renk"].values, opacity=0.85,
+        customdata=list(zip(cey["Aralik"], cey["_acs_str"], cey["_kap_str"], cey["_cey_str"])),
+        hovertemplate="<b>%{customdata[0]}</b><br>Açılış: %{customdata[1]} ₺ → Kapanış: %{customdata[2]} ₺<br>Değişim: <b>%{customdata[3]}</b><extra></extra>"
+    ))
+    fig_cey_bar.add_hline(y=0, line_color="#2a4a7a", line_width=1)
+    tv_cey, tt_cey = safe_ticks(cey["CeyrekDegisim"].min(), cey["CeyrekDegisim"].max(), n=8, decimals=1, suffix="%")
+    apply_base(fig_cey_bar, height=380,
+        title=dict(text="ÇEYREKLİK DEĞİŞİM (Çeyrek Başı→Çeyrek Sonu) · Q1=Oca–Mar, Q2=Nis–Haz, Q3=Tem–Eyl, Q4=Eki–Ara",
+                   font=dict(size=11, color="#4a6080", family="DM Mono, monospace"), x=0),
+        xaxis=dict(gridcolor="#131c2e", tickformat="%Y", tickfont=dict(size=10, color="#4a6080")),
+        yaxis={**yt(tv_cey, tt_cey, {"gridcolor":"#131c2e","tickfont":dict(size=10,color="#4a6080"), "ticksuffix":"%"})},
+        showlegend=False, hovermode="closest")
+    st.plotly_chart(fig_cey_bar, use_container_width=True)
+
+    cey_ort  = cey["CeyrekDegisim"].mean()
+    cey_maks = cey["CeyrekDegisim"].max()
+    cey_mins = cey["CeyrekDegisim"].min()
+    cey_poz  = (cey["CeyrekDegisim"] > 0).sum()
+    cey_neg  = (cey["CeyrekDegisim"] < 0).sum()
+    sign_cey = "+" if cey_ort >= 0 else ""
+    st.markdown(f"""
+    <div class="metric-row" style="grid-template-columns: repeat(5, 1fr);">
+      <div class="metric-card" style="border-top:2px solid #b794f4;">
+        <div class="metric-label">Çeyreklik Ort.</div>
+        <div class="metric-value metric-{'pos' if cey_ort>=0 else 'neg'}">{sign_cey}{f'{cey_ort:.3f}'.replace('.',',')}%</div>
+        <div class="metric-sub">Çeyrek başı→çeyrek sonu ort.</div></div>
+      <div class="metric-card" style="border-top:2px solid #00d4aa;">
+        <div class="metric-label">Pozitif Çeyrek</div>
+        <div class="metric-value metric-pos">{cey_poz}</div></div>
+      <div class="metric-card" style="border-top:2px solid #ff4d6a;">
+        <div class="metric-label">Negatif Çeyrek</div>
+        <div class="metric-value metric-neg">{cey_neg}</div></div>
+      <div class="metric-card">
+        <div class="metric-label">En İyi Çeyrek</div>
+        <div class="metric-value metric-pos">+{f'{cey_maks:.2f}'.replace('.',',')}%</div></div>
+      <div class="metric-card">
+        <div class="metric-label">En Kötü Çeyrek</div>
+        <div class="metric-value metric-neg">{f'{cey_mins:.2f}'.replace('.',',')}%</div></div>
+    </div>""", unsafe_allow_html=True)
+    st.markdown("<br>", unsafe_allow_html=True)
+
 with tab3:
-    # Gun_Adi_TR ve aktif_gunler tab2'de tanımlandı, burada da lazım
     if "Gun_Adi_TR" not in df.columns:
         df["Gun_Adi_TR"] = df["Gun_Adi"].map(TR_GUN)
     aktif_gunler_t3 = gun_filtre if gun_filtre else ["Pazartesi","Salı","Çarşamba","Perşembe","Cuma"]
@@ -1025,10 +1258,68 @@ with tab3:
         yaxis=dict(tickfont=dict(size=11, color="#4a6080"), autorange="reversed"))
     st.plotly_chart(fig_heat, use_container_width=True)
 
+    # ════ AYLIK ISI HARİTASI (Gerçek ay başı→sonu) ════════════════════
+    st.markdown("""
+    <div class="section-label">◈ Yıl–Ay Aylık Getiri Isı Haritası (Ay Başı→Ay Sonu)
+        <span style="color:#4a9eff;font-size:0.75rem;font-weight:400;margin-left:8px;">
+        · Her ayın ilk işlem günü açılış → son işlem günü kapanış
+        </span>
+    </div>""", unsafe_allow_html=True)
+
+    ay_heat_df = ay_global.copy()
+    ay_heat_pivot = ay_heat_df.pivot(index="Yil", columns="Ay", values="AyDegisim")
+    ay_heat_pivot.columns = [TR_AY.get(c, str(c)) for c in ay_heat_pivot.columns]
+    ay_heat_text = np.where(
+        np.isnan(ay_heat_pivot.values), "",
+        np.vectorize(lambda v: f"{f'{v:.1f}'.replace('.', ',')}%")(ay_heat_pivot.values)
+    )
+    fig_ay_heat = go.Figure(go.Heatmap(
+        z=ay_heat_pivot.values, x=ay_heat_pivot.columns.tolist(),
+        y=ay_heat_pivot.index.astype(str).tolist(),
+        colorscale=[[0,"#ff4d6a"],[0.5,"#0d1220"],[1,"#00d4aa"]], zmid=0,
+        text=ay_heat_text, texttemplate="%{text}", textfont=dict(size=9, family="DM Mono, monospace"),
+        hovertemplate="<b>%{y} — %{x}</b><br>Ay getirisi: <b>%{text}</b><extra></extra>",
+        colorbar=dict(tickfont=dict(size=9, color="#4a6080"))
+    ))
+    apply_base(fig_ay_heat, height=500,
+        title=dict(text="YIL–AY GETİRİ ISISI (Ay Başı→Ay Sonu)", font=dict(size=11, color="#4a6080", family="DM Mono, monospace"), x=0),
+        xaxis=dict(side="bottom", tickfont=dict(size=11, color="#4a6080")),
+        yaxis=dict(tickfont=dict(size=11, color="#4a6080"), autorange="reversed"))
+    st.plotly_chart(fig_ay_heat, use_container_width=True)
+
+    # ════ ÇEYREKLİK ISI HARİTASI ════════════════════════════════════════
+    st.markdown("""
+    <div class="section-label">◈ Çeyreklik Getiri Isı Haritası (Çeyrek Başı→Çeyrek Sonu)
+        <span style="color:#b794f4;font-size:0.75rem;font-weight:400;margin-left:8px;">
+        · Q1=Oca–Mar · Q2=Nis–Haz · Q3=Tem–Eyl · Q4=Eki–Ara
+        </span>
+    </div>""", unsafe_allow_html=True)
+
+    cey_heat = cey_global.copy()
+    cey_heat_pivot = cey_heat.pivot(index="Yil", columns="Ceyrek", values="CeyrekDegisim")
+    cey_heat_pivot.columns = [f"Q{int(c)}" for c in cey_heat_pivot.columns]
+    cey_heat_text = np.where(
+        np.isnan(cey_heat_pivot.values), "",
+        np.vectorize(lambda v: f"{f'{v:.1f}'.replace('.', ',')}%")(cey_heat_pivot.values)
+    )
+    fig_cey_heat = go.Figure(go.Heatmap(
+        z=cey_heat_pivot.values, x=cey_heat_pivot.columns.tolist(),
+        y=cey_heat_pivot.index.astype(str).tolist(),
+        colorscale=[[0,"#ff4d6a"],[0.5,"#0d1220"],[1,"#00d4aa"]], zmid=0,
+        text=cey_heat_text, texttemplate="%{text}", textfont=dict(size=10, family="DM Mono, monospace"),
+        hovertemplate="<b>%{y} %{x}</b><br>Çeyrek getirisi: <b>%{text}</b><extra></extra>",
+        colorbar=dict(tickfont=dict(size=9, color="#4a6080"))
+    ))
+    apply_base(fig_cey_heat, height=500,
+        title=dict(text="ÇEYREKLİK GETİRİ ISISI (Q1=Oca–Mar, Q2=Nis–Haz, Q3=Tem–Eyl, Q4=Eki–Ara)",
+                   font=dict(size=11, color="#4a6080", family="DM Mono, monospace"), x=0),
+        xaxis=dict(side="bottom", tickfont=dict(size=13, color="#4a6080")),
+        yaxis=dict(tickfont=dict(size=11, color="#4a6080"), autorange="reversed"))
+    st.plotly_chart(fig_cey_heat, use_container_width=True)
+
 # ════════════ TAB 4 — KÜMÜLATİF & PERFORMANS ════════════
 with tab4:
 
-    # ── CSS ───────────────────────────────────────────────────────────────
     st.markdown("""<style>
     .perf-scorecard {
         background:#0d1220;border:1px solid #1e2d4a;border-radius:12px;
@@ -1060,12 +1351,11 @@ with tab4:
     .regime-low {background:rgba(0,212,170,0.07);border:1px solid rgba(0,212,170,0.2);}
     </style>""", unsafe_allow_html=True)
 
-    # ── Periyot seçici ────────────────────────────────────────────────────
     st.markdown('<div class="section-label">◈ Periyot & Frekans Seçimi</div>', unsafe_allow_html=True)
     sel_c1, sel_c2, sel_c3 = st.columns([2, 2, 3])
     with sel_c1:
         frekans = st.selectbox("Frekans",
-            ["Günlük","Haftalık","Aylık","Çeyreklik","Yıllık"], index=1, key="cum_frekans")
+            ["Günlük","Haftalık (7 gün)","Aylık","Çeyreklik","Yıllık"], index=1, key="cum_frekans")
     with sel_c2:
         bas_yil = int(df["Tarih"].min().year)
         bit_yil = int(df["Tarih"].max().year)
@@ -1077,71 +1367,88 @@ with tab4:
             ["Kümülatif Değişim %","Yuvarlanmalı Ort.","Volatilite Bandı"],
             default=["Kümülatif Değişim %","Yuvarlanmalı Ort."], key="cum_layers")
 
-    # ── Frekans çarpanları (yıllıklaştırma için) ─────────────────────────
-    ANNUALIZE = {"Günlük":252, "Haftalık":52, "Aylık":12, "Çeyreklik":4, "Yıllık":1}
+    # Yıllıklaştırma faktörleri
+    ANNUALIZE = {"Günlük":252, "Haftalık (7 gün)":52, "Aylık":12, "Çeyreklik":4, "Yıllık":1}
     ann_factor = ANNUALIZE[frekans]
 
-    # ── Periyot verisini hazırla ──────────────────────────────────────────
-    df_cum = df[(df["Yil"] >= yil_aralik[0]) & (df["Yil"] <= yil_aralik[1])].copy()
+    # Periyot verisini hazırla — gerçek periyot bazlı hesaplamalar
+    df_cum_filter = df[(df["Yil"] >= yil_aralik[0]) & (df["Yil"] <= yil_aralik[1])].copy()
 
     if frekans == "Günlük":
-        periyot_df = df_cum[["Tarih","Dolar_Kuru","Yuzde_Degisim","Yil"]].copy()
+        periyot_df = df_cum_filter[["Tarih","Dolar_Kuru","Yuzde_Degisim","Yil"]].copy()
         periyot_df.columns = ["Tarih","Kur","Degisim","Yil"]
         x_fmt, adet_label = "%b %Y", "Günlük Gözlem"
 
-    elif frekans == "Haftalık":
+    elif frekans == "Haftalık (7 gün)":
+        # Gerçek haftalık veri: Pzt açılış → Paz kapanış
         hf_c = hf_global[
-            (hf_global["PztTarih"].dt.year >= yil_aralik[0]) &
-            (hf_global["PztTarih"].dt.year <= yil_aralik[1])].copy()
+            (hf_global["AcilisTarih"].dt.year >= yil_aralik[0]) &
+            (hf_global["KapanisTarih"].dt.year <= yil_aralik[1])].copy()
         periyot_df = pd.DataFrame({
-            "Tarih":   hf_c["CumTarih"].values,
-            "Kur":     hf_c["CumKur"].values,
+            "Tarih":   hf_c["KapanisTarih"].values,
+            "Kur":     hf_c["KapanisKur"].values,
             "Degisim": hf_c["HaftaDegisim"].values,
-            "Yil":     hf_c["CumTarih"].dt.year.values,
+            "Yil":     hf_c["KapanisTarih"].dt.year.values,
         })
-        x_fmt, adet_label = "%b %Y", "Haftalık Gözlem"
+        x_fmt, adet_label = "%b %Y", "Haftalık Gözlem (7 takvim günü)"
 
     elif frekans == "Aylık":
-        ay_g = df_cum.groupby(["Yil","Ay"]).agg(
-            Tarih=("Tarih","last"), Kur=("Dolar_Kuru","last"),
-            IlkKur=("Dolar_Kuru","first")).reset_index()
-        ay_g["Degisim"] = (ay_g["Kur"] / ay_g["IlkKur"] - 1) * 100
-        periyot_df = ay_g[["Tarih","Kur","Degisim","Yil"]].copy()
-        x_fmt, adet_label = "%Y", "Aylık Gözlem"
+        # Gerçek aylık veri: Ay başı → Ay sonu
+        ay_c = ay_global[
+            (ay_global["Yil"] >= yil_aralik[0]) &
+            (ay_global["Yil"] <= yil_aralik[1])].copy()
+        periyot_df = pd.DataFrame({
+            "Tarih":   ay_c["KapanisTarih"].values,
+            "Kur":     ay_c["KapanisKur"].values,
+            "Degisim": ay_c["AyDegisim"].values,
+            "Yil":     ay_c["Yil"].values,
+        })
+        x_fmt, adet_label = "%Y", "Aylık Gözlem (Ay Başı→Sonu)"
 
     elif frekans == "Çeyreklik":
-        df_cum["Ceyrek"] = df_cum["Tarih"].dt.quarter
-        cey_g = df_cum.groupby(["Yil","Ceyrek"]).agg(
-            Tarih=("Tarih","last"), Kur=("Dolar_Kuru","last"),
-            IlkKur=("Dolar_Kuru","first")).reset_index()
-        cey_g["Degisim"] = (cey_g["Kur"] / cey_g["IlkKur"] - 1) * 100
-        periyot_df = cey_g[["Tarih","Kur","Degisim","Yil"]].copy()
-        x_fmt, adet_label = "%Y", "Çeyreklik Gözlem"
+        # Gerçek çeyreklik veri: Çeyrek başı → Çeyrek sonu
+        cey_c = cey_global[
+            (cey_global["Yil"] >= yil_aralik[0]) &
+            (cey_global["Yil"] <= yil_aralik[1])].copy()
+        periyot_df = pd.DataFrame({
+            "Tarih":   cey_c["KapanisTarih"].values,
+            "Kur":     cey_c["KapanisKur"].values,
+            "Degisim": cey_c["CeyrekDegisim"].values,
+            "Yil":     cey_c["Yil"].values,
+        })
+        x_fmt, adet_label = "%Y", "Çeyreklik Gözlem (Çeyrek Başı→Sonu)"
 
     else:  # Yıllık
-        yil_g = df_cum.groupby("Yil").agg(
-            Tarih=("Tarih","last"), Kur=("Dolar_Kuru","last"),
-            IlkKur=("Dolar_Kuru","first")).reset_index()
-        yil_g["Degisim"] = (yil_g["Kur"] / yil_g["IlkKur"] - 1) * 100
-        periyot_df = yil_g[["Tarih","Kur","Degisim","Yil"]].copy()
-        x_fmt, adet_label = "%Y", "Yıllık Gözlem"
+        df_cum_y = df_cum_filter.copy()
+        df_cum_y["Yil"] = df_cum_y["Tarih"].dt.year
+        yil_g = df_cum_y.groupby("Yil").agg(
+            AcilisTarih=("Tarih", "min"), AcilisKur=("Dolar_Kuru", "first"),
+            KapanisTarih=("Tarih", "max"), KapanisKur=("Dolar_Kuru", "last")
+        ).reset_index()
+        yil_g["YilDegisim"] = (yil_g["KapanisKur"] / yil_g["AcilisKur"] - 1) * 100
+        periyot_df = pd.DataFrame({
+            "Tarih":   yil_g["KapanisTarih"].values,
+            "Kur":     yil_g["KapanisKur"].values,
+            "Degisim": yil_g["YilDegisim"].values,
+            "Yil":     yil_g["Yil"].values,
+        })
+        x_fmt, adet_label = "%Y", "Yıllık Gözlem (Yıl Başı→Sonu)"
 
     periyot_df = periyot_df.sort_values("Tarih").reset_index(drop=True)
 
-    # ── DOĞRU METRİKLER ──────────────────────────────────────────────────
-    # Kümülatif: bileşik (kur bazlı), basit toplam değil
+    # Kümülatif — bileşik (kur bazlı)
     kur0 = periyot_df["Kur"].iloc[0]
     periyot_df["Kumülatif"] = (periyot_df["Kur"] / kur0 - 1) * 100
 
-    # Drawdown: kümülatifin running max'ından sapma
+    # Drawdown
     rolling_max = periyot_df["Kumülatif"].cummax()
-    periyot_df["Drawdown"] = periyot_df["Kumülatif"] - rolling_max  # ≤ 0
+    periyot_df["Drawdown"] = periyot_df["Kumülatif"] - rolling_max
 
-    # MA penceresi: gözlem sayısına göre adaptif
+    # MA
     ma_win = min(20, max(3, len(periyot_df)//10))
     periyot_df["MA"] = periyot_df["Kumülatif"].rolling(ma_win).mean()
 
-    # Volatilite bandı: periyot getirisi std'si üzerinden
+    # Volatilite bandı
     periyot_df["Vol"] = periyot_df["Degisim"].rolling(ma_win).std()
     periyot_df["Band_ust"] = periyot_df["Kumülatif"] + periyot_df["Vol"] * 2
     periyot_df["Band_alt"] = periyot_df["Kumülatif"] - periyot_df["Vol"] * 2
@@ -1149,37 +1456,32 @@ with tab4:
     # Temel istatistikler
     n            = len(periyot_df)
     r            = periyot_df["Degisim"].dropna()
-    ort          = r.mean()                         # periyot ort getiri
-    std          = r.std(ddof=1)                    # periyot std sapma
-    toplam_get   = periyot_df["Kumülatif"].iloc[-1] # bileşik toplam %
-    max_dd       = periyot_df["Drawdown"].min()     # maks drawdown (≤0)
+    ort          = r.mean()
+    std          = r.std(ddof=1)
+    toplam_get   = periyot_df["Kumülatif"].iloc[-1]
+    max_dd       = periyot_df["Drawdown"].min()
     poz          = int((r > 0).sum())
     neg          = int((r < 0).sum())
     poz_oran     = poz / n * 100 if n > 0 else 0
 
-    # CAGR — bileşik yıllık büyüme oranı
+    # CAGR
     n_yil = (periyot_df["Tarih"].iloc[-1] - periyot_df["Tarih"].iloc[0]).days / 365.25
     kur_son = periyot_df["Kur"].iloc[-1]
     cagr = ((kur_son / kur0) ** (1 / max(n_yil, 0.01)) - 1) * 100 if n_yil > 0 else 0.0
 
-    # Annualized Sharpe — risk-free = 0 kabul (TL kuru analizi için standart)
+    # Sharpe / Sortino / Calmar
     ann_ort = ort * ann_factor
     ann_std = std * (ann_factor ** 0.5)
     sharpe  = ann_ort / ann_std if ann_std > 0 else 0.0
-
-    # Sortino — sadece negatif sapmaları kullan
     neg_r   = r[r < 0]
     downside_std = neg_r.std(ddof=1) * (ann_factor ** 0.5) if len(neg_r) > 1 else 1e-9
     sortino = ann_ort / downside_std if downside_std > 0 else 0.0
-
-    # Calmar Ratio — CAGR / |Max Drawdown|
     calmar = cagr / abs(max_dd) if abs(max_dd) > 0.001 else 0.0
 
-    # Percentile rank — son değişimin tüm tarihsel dağılımdaki yeri
     son_degisim = periyot_df["Degisim"].iloc[-1]
     pct_rank    = float((r <= son_degisim).mean() * 100)
 
-    # Streak analizi — üst üste pozitif/negatif periyot serileri
+    # Streak analizi
     def _streak_analiz(seri):
         streaks_pos, streaks_neg = [], []
         cur_val, cur_len = None, 0
@@ -1201,20 +1503,20 @@ with tab4:
     avg_pos_streak = np.mean(all_pos_str) if all_pos_str else 0
     avg_neg_streak = np.mean(all_neg_str) if all_neg_str else 0
 
-    # Mevsimsellik — ay bazlı ortalama getiri (tüm yılların ortalaması)
-    if frekans in ["Günlük","Haftalık","Aylık"]:
-        df_mevs = df_cum.copy()
+    # Mevsimsellik
+    if frekans in ["Günlük","Haftalık (7 gün)","Aylık"]:
+        df_mevs = df_cum_filter.copy()
         mevs = df_mevs.groupby("Ay")["Yuzde_Degisim"].mean()
     else:
         mevs = pd.Series(dtype=float)
 
-    # Regime detection — 20 periyotluk vol üzerinden yüksek/düşük rejim
+    # Volatilite rejimi
     periyot_df["Vol20"] = periyot_df["Degisim"].rolling(20, min_periods=5).std()
     vol_median = periyot_df["Vol20"].median()
     periyot_df["Rejim"] = periyot_df["Vol20"].apply(
         lambda x: "Yüksek Vol" if (pd.notna(x) and x > vol_median) else "Düşük Vol")
 
-    # USD–EUR korelasyon (spread_hesapla zaten çekti, ham veri üzerinden)
+    # USD–EUR korelasyon
     usd_d = veri_isle_api(df_raw, "USD", tur_sec)
     eur_d = veri_isle_api(df_raw, "EUR", tur_sec)
     if usd_d is not None and eur_d is not None:
@@ -1230,7 +1532,7 @@ with tab4:
         kor_global = None
         kor_rolling = None
 
-    # ── Formatlar ─────────────────────────────────────────────────────────
+    # Formatlar
     ilk_kur_s = fkur(kur0)
     son_kur_s = fkur(kur_son)
     tarih_bas = periyot_df["Tarih"].iloc[0].strftime("%d.%m.%Y")
@@ -1240,7 +1542,11 @@ with tab4:
     f3 = lambda v: f'{v:.3f}'.replace('.',',')
     f1 = lambda v: f'{v:.1f}'.replace('.',',')
 
-    # ════ SCORECARD SATIRI 1 — 5 kart ═════════════════════════════════════
+    # Scorecard frekans etiketi
+    _frekans_kisa = {"Günlük":"Gün","Haftalık (7 gün)":"Hft","Aylık":"Ay","Çeyreklik":"Çey","Yıllık":"Yıl"}
+    frekans_kisa = _frekans_kisa.get(frekans, frekans[:3])
+
+    # ════ SCORECARD SATIRI ════════════════════════════════════════════════
     st.markdown('<div class="section-label">◈ Performans Özeti</div>', unsafe_allow_html=True)
     sc1,sc2,sc3,sc4,sc5 = st.columns(5)
 
@@ -1299,7 +1605,7 @@ with tab4:
         <div class="perf-sub">Ort. {frekans.lower()} değişim</div>
         <hr class="perf-divider">
         <div class="perf-row">
-            <span class="perf-row-label">Std Sapma ({frekans[:3]})</span>
+            <span class="perf-row-label">Std Sapma ({frekans_kisa})</span>
             <span class="perf-row-val">±{f3(std)}%</span>
         </div>
         <div class="perf-row">
@@ -1369,11 +1675,11 @@ with tab4:
         <div class="perf-scorecard-title">◈ Streak & Ekstremler</div>
         <div class="perf-row">
             <span class="perf-row-label">Max Poz. Seri</span>
-            <span class="perf-row-val" style="color:#00d4aa">{max_pos_streak} {frekans[:3]}</span>
+            <span class="perf-row-val" style="color:#00d4aa">{max_pos_streak} {frekans_kisa}</span>
         </div>
         <div class="perf-row">
             <span class="perf-row-label">Max Neg. Seri</span>
-            <span class="perf-row-val" style="color:#ff4d6a">{max_neg_streak} {frekans[:3]}</span>
+            <span class="perf-row-val" style="color:#ff4d6a">{max_neg_streak} {frekans_kisa}</span>
         </div>
         <div class="perf-row">
             <span class="perf-row-label">Ort. Poz. Seri</span>
@@ -1400,7 +1706,7 @@ with tab4:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ════ GRAFİK 1 — Kümülatif + Drawdown (subplots) ══════════════════════
+    # ════ GRAFİK 1 — Kümülatif + Drawdown ════════════════════════════════
     st.markdown(
         f'<div class="section-label">◈ Kümülatif Getiri & Drawdown — {frekans} '
         f'<span style="color:#4a9eff;font-size:0.8rem;font-weight:400;">'
@@ -1443,7 +1749,6 @@ with tab4:
             hovertemplate="%{x|%d.%m.%Y}<br>MA: <b>%{y:.2f}%</b><extra></extra>"),
             row=1, col=1)
 
-    # Drawdown alanı
     fig_cum.add_trace(go.Scatter(
         x=periyot_df["Tarih"], y=periyot_df["Drawdown"],
         mode="lines", name="Drawdown",
@@ -1483,11 +1788,10 @@ with tab4:
             rows=2, cols=1, shared_xaxes=True,
             row_heights=[0.52, 0.48], vertical_spacing=0.04,
             subplot_titles=[
-                f"{frekans} Periyot Değişimi (her çubuğun kendi dönemi)",
+                f"{frekans} Periyot Değişimi",
                 "Kümülatif Birikim (başlangıçtan bugüne, bileşik)"
             ]
         )
-        # Üst: periyot bazlı bar
         fig_bar.add_trace(go.Bar(
             x=periyot_df["Tarih"], y=periyot_df["Degisim"],
             marker_color=periyot_df["_rc"].values, marker_line_width=0, opacity=0.85,
@@ -1504,7 +1808,6 @@ with tab4:
         ), row=1, col=1)
         fig_bar.add_hline(y=0, line_color="#2a4a7a", line_width=1, row=1, col=1)
 
-        # Alt: kümülatif birikim (sürekli artan)
         fig_bar.add_trace(go.Scatter(
             x=periyot_df["Tarih"], y=periyot_df["Kumülatif"],
             mode="lines", name="Kümülatif %",
@@ -1602,7 +1905,7 @@ with tab4:
     # ════ GRAFİK 4 — Mevsimsellik ═════════════════════════════════════════
     if len(mevs) > 0:
         st.markdown('<div class="section-label">◈ Mevsimsellik — Ay Bazlı Ortalama Günlük Getiri</div>', unsafe_allow_html=True)
-        ay_ort_genel = df_cum["Yuzde_Degisim"].mean()
+        ay_ort_genel = df_cum_filter["Yuzde_Degisim"].mean()
         mevs_df = mevs.reset_index()
         mevs_df.columns = ["Ay","OrtGetiri"]
         mevs_df["AyAdi"] = mevs_df["Ay"].map(TR_AY_UZUN)
@@ -1642,7 +1945,6 @@ with tab4:
     fig_reg = make_subplots(rows=2, cols=1, shared_xaxes=True,
                             row_heights=[0.6,0.4], vertical_spacing=0.04)
 
-    # Kur çizgisi + rejim renkleri
     fig_reg.add_trace(go.Scatter(
         x=periyot_df["Tarih"], y=periyot_df["Kur"],
         mode="lines", name="Kur",
@@ -1650,7 +1952,6 @@ with tab4:
         hovertemplate="%{x|%d.%m.%Y}<br>Kur: <b>%{y:.4f} ₺</b><extra></extra>"),
         row=1, col=1)
 
-    # Yüksek vol bölgelerini şerit olarak göster
     in_high = False
     x_start = None
     for _, row_r in periyot_nona.iterrows():
@@ -1664,7 +1965,6 @@ with tab4:
         fig_reg.add_vrect(x0=x_start, x1=periyot_nona["Tarih"].iloc[-1],
             fillcolor="rgba(255,77,106,0.07)", layer="below", line_width=0, row=1, col=1)
 
-    # Volatilite çizgisi
     fig_reg.add_trace(go.Scatter(
         x=periyot_nona["Tarih"], y=periyot_nona["Vol20"],
         mode="lines", name=f"Vol (20 periyot)",
@@ -1691,7 +1991,6 @@ with tab4:
     )
     st.plotly_chart(fig_reg, use_container_width=True)
 
-    # Rejim istatistikleri
     reg_col1, reg_col2 = st.columns(2)
     for rcol, rdf, rlabel, rcolor in [
         (reg_col1, regime_high, "Yüksek Volatilite Rejimi", "#ff4d6a"),
@@ -1716,11 +2015,10 @@ with tab4:
                     <span class="perf-row-val" style="color:#ff4d6a;">{f2(rd.min())}%</span></div>
             </div>""", unsafe_allow_html=True)
 
-    # ════ GRAFİK 6 — USD/EUR Korelasyon ══════════════════════════════════
+    # ════ GRAFİK 6 — Korelasyon ══════════════════════════════════════════
     if kor_rolling is not None and len(kor_rolling.dropna()) > 10:
         st.markdown('<div class="section-label">◈ USD/TRY — EUR/TRY Korelasyon (60 Günlük Yuvarlanmalı)</div>', unsafe_allow_html=True)
         kor_plot = kor_rolling.dropna().copy()
-        kor_plot["_renk"] = kor_plot["Korelasyon"].apply(lambda x: "#00d4aa" if x>=0.8 else ("#f6ad55" if x>=0.5 else "#ff4d6a"))
         fig_kor = go.Figure()
         fig_kor.add_trace(go.Scatter(
             x=kor_plot["Tarih"], y=kor_plot["Korelasyon"],
@@ -1752,9 +2050,7 @@ with tab4:
         s_arr = np.array(streaks)
         counts = pd.Series(s_arr).value_counts().sort_index()
         mean_val = float(np.mean(s_arr))
-        # Kategorik eksende x değerini numeric index pozisyonuna çevir
         x_labels = counts.index.astype(str).tolist()
-        # mean_val'e en yakın label pozisyonunu bul (0-tabanlı)
         x_numeric = [int(v) for v in counts.index]
         mean_pos  = min(range(len(x_numeric)), key=lambda i: abs(x_numeric[i] - mean_val))
 
@@ -1763,10 +2059,8 @@ with tab4:
             marker_color=color, marker_line_width=0, opacity=0.85,
             hovertemplate=f"{label}: <b>%{{x}}</b><br>Frekans: <b>%{{y}}</b><extra></extra>"
         ))
-        # add_shape paper koordinatlarıyla kategorik eksende çalışır
         fig_s.add_shape(
-            type="line",
-            xref="x", yref="paper",
+            type="line", xref="x", yref="paper",
             x0=x_labels[mean_pos], x1=x_labels[mean_pos],
             y0=0, y1=1,
             line=dict(color="#f6ad55", width=1.2, dash="dash")
@@ -1800,14 +2094,13 @@ with tab4:
                               f"Ardışık negatif {frekans.lower()}")
         st.plotly_chart(fig_sn, use_container_width=True)
 
-    # ════ GRAFİK 8 — Momentum crossover ══════════════════════════════════
+    # ════ GRAFİK 8 — Momentum ════════════════════════════════════════════
     st.markdown('<div class="section-label">◈ Momentum — Kısa / Uzun Vade Çaprazlama</div>', unsafe_allow_html=True)
 
     m_win_k = max(5,  min(20,  n//10))
     m_win_u = max(20, min(60,  n//3))
     periyot_df["Mom_K"] = periyot_df["Kur"].rolling(m_win_k).mean()
     periyot_df["Mom_U"] = periyot_df["Kur"].rolling(m_win_u).mean()
-    periyot_df["Mom_Signal"] = np.where(periyot_df["Mom_K"] > periyot_df["Mom_U"], 1, -1)
 
     fig_mom = make_subplots(rows=2, cols=1, shared_xaxes=True,
                             row_heights=[0.65, 0.35], vertical_spacing=0.04)
@@ -1880,6 +2173,7 @@ st.markdown("""
     TCMB EVDS · USDTRY / EURTRY ANALİZ PLATFORMU · STREAMLIT + PLOTLY
 </div>
 """, unsafe_allow_html=True)
+
 with tab5:
     st.markdown(f'<div class="section-label">◈ Büyük Sıçramalardan Sonra Ne Oluyor? (≥%{fwd_threshold})</div>', unsafe_allow_html=True)
     periods = [1, 5, 10, 21, 63]
@@ -1947,10 +2241,10 @@ with tab5:
         thresholds = np.arange(1.0, 12.0, 0.5)
         means_21, counts_21 = [], []
         for thr in thresholds:
-            f = forward_analysis(df, thr, [21])
-            if 21 in f and f[21]["n"] >= 5:
-                means_21.append(f[21]["mean"])
-                counts_21.append(f[21]["n"])
+            f_tmp = forward_analysis(df, thr, [21])
+            if 21 in f_tmp and f_tmp[21]["n"] >= 5:
+                means_21.append(f_tmp[21]["mean"])
+                counts_21.append(f_tmp[21]["n"])
             else:
                 means_21.append(np.nan)
                 counts_21.append(0)
@@ -2049,6 +2343,7 @@ with tab5:
         title=dict(text="HAFTANIN GÜNLERİNE GÖRE SIÇRAMA SAYISI", font=dict(size=11, color="#4a6080", family="DM Mono, monospace"), x=0),
         xaxis=dict(gridcolor="#131c2e"), yaxis=dict(gridcolor="#131c2e"), showlegend=False)
     st.plotly_chart(fig5, use_container_width=True)
+
 # ════════════ TAB 6 — TABLOLAR & SPREAD ════════════
 with tab6:
     st.markdown(f'<div class="section-label">◈ {doviz_sec}/TRY Alış–Satış Spread Analizi</div>', unsafe_allow_html=True)
@@ -2181,14 +2476,14 @@ with tab6:
         else:
             st.info("USD ve EUR spread karşılaştırması için her iki dövizin alış/satış verisi gereklidir.")
 
-    # ── Yardımcı: yön etiketi ──────────────────────────────────────────────
+    # ── Yön etiketi ───────────────────────────────────────────────────────
     yon_label = {
         "Tümü":              "Tümü",
         "Yalnız Pozitif ↑":  "Yalnız ↑ Pozitif",
         "Yalnız Negatif ↓":  "Yalnız ↓ Negatif",
     }
 
-    # ── Aktif filtre banner ────────────────────────────────────────────────
+    # ── Filtre banner ─────────────────────────────────────────────────────
     esik_s   = str(esik).replace(".", ",")
     hf_esik_s = str(haftalik_esik).replace(".", ",")
     st.markdown(f"""
@@ -2203,7 +2498,7 @@ with tab6:
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Günlük sıçrama tablosu ─────────────────────────────────────────────
+    # ── Günlük sıçrama tablosu ────────────────────────────────────────────
     st.markdown(
         f'<div class="section-label">◈ Sıçrama Tablosu '
         f'<span style="color:#f6ad55;font-size:0.8rem;font-weight:400;">'
@@ -2232,7 +2527,7 @@ with tab6:
     )
     st.dataframe(tbl_show, use_container_width=True, height=420)
 
-    # ── Aylık & Yıllık özetler ─────────────────────────────────────────────
+    # ── Aylık & Yıllık özetler ────────────────────────────────────────────
     c1, c2 = st.columns(2)
     with c1:
         st.markdown(
@@ -2242,14 +2537,14 @@ with tab6:
             f'</span></div>',
             unsafe_allow_html=True
         )
-        aylik = (
+        aylik_ozet = (
             sicramalar
             .groupby("Ay_Adi")["Abs_Degisim"]
             .agg(["count", "mean", "max", "min"])
             .round(3)
         )
-        aylik.columns = ["Toplam", "Ort. %", "Maks %", "Min %"]
-        st.dataframe(aylik, use_container_width=True)
+        aylik_ozet.columns = ["Toplam", "Ort. %", "Maks %", "Min %"]
+        st.dataframe(aylik_ozet, use_container_width=True)
 
     with c2:
         st.markdown(
@@ -2259,26 +2554,25 @@ with tab6:
             f'</span></div>',
             unsafe_allow_html=True
         )
-        yillik = sicramalar.groupby("Yil").agg(
+        yillik_ozet = sicramalar.groupby("Yil").agg(
             Toplam    = ("Abs_Degisim",     "count"),
             Ort_Pct   = ("Abs_Degisim",     "mean"),
             Pozitif   = ("Yuzde_Degisim",   lambda x: (x > 0).sum()),
             Negatif   = ("Yuzde_Degisim",   lambda x: (x < 0).sum()),
             Maks      = ("Abs_Degisim",     "max"),
         ).round(3)
-        yillik.columns = ["Toplam", "Ort. %", "Pozitif", "Negatif", "Maks %"]
-        st.dataframe(yillik, use_container_width=True)
+        yillik_ozet.columns = ["Toplam", "Ort. %", "Pozitif", "Negatif", "Maks %"]
+        st.dataframe(yillik_ozet, use_container_width=True)
 
-    # ── Haftalık tablo — FİLTRELİ görünüm ────────────────────────────────
+    # ── Haftalık tablo (7 takvim günü) ───────────────────────────────────
     st.markdown(
-        f'<div class="section-label">◈ Haftalık Değişim Tablosu (Pzt → Cum) '
+        f'<div class="section-label">◈ Haftalık Değişim Tablosu (Pzt Açılış → Paz Kapanış, 7 Gün) '
         f'<span style="color:#f6ad55;font-size:0.8rem;font-weight:400;">'
         f'· Eşik ≥%{hf_esik_s} · {yon_label.get(haftalik_yon, haftalik_yon)}'
         f'</span></div>',
         unsafe_allow_html=True
     )
 
-    # Haftalık yön + eşik filtresini tabloya uygula
     if haftalik_yon == "Yalnız Pozitif ↑":
         hf_tablo = hf_global[hf_global["HaftaDegisim"] >= haftalik_esik].copy()
     elif haftalik_yon == "Yalnız Negatif ↓":
@@ -2287,23 +2581,20 @@ with tab6:
         hf_tablo = hf_global[hf_global["HaftaDegisim"].abs() >= haftalik_esik].copy()
 
     def _hf_df_hazirla(kaynak):
-        t = kaynak[["PztTarih", "CumTarih", "PztKur", "CumKur", "HaftaDegisim"]].copy()
-        t.insert(0, "Yıl",   t["PztTarih"].dt.year)
-        t.insert(1, "Hafta", t["PztTarih"].dt.strftime("%d.%m.%Y") + " – " + t["CumTarih"].dt.strftime("%d.%m.%Y"))
-        t["Pzt Kur"]   = t["PztKur"].apply(tr_fmt_kur)
-        t["Cum Kur"]   = t["CumKur"].apply(tr_fmt_kur)
-        t["Değişim %"] = t["HaftaDegisim"].apply(tr_fmt_pct)
-        t["Yön"]       = t["HaftaDegisim"].apply(lambda x: "↑" if x > 0 else "↓")
-        t = (
-            t[["Yıl", "Hafta", "Pzt Kur", "Cum Kur", "Değişim %", "Yön"]]
-            .sort_values("Hafta", ascending=False)
-            .reset_index(drop=True)
-        )
-        t.index = t.index + 1
-        return t
+        t = kaynak.copy()
+        t2 = pd.DataFrame({
+            "Yıl":         t["AcilisTarih"].dt.year,
+            "Hafta (Pzt–Paz)": t["Aralik"],
+            "İşlem Aralığı":   t["IslemAralik"],
+            "Açılış Kuru":     t["AcilisKur"].apply(tr_fmt_kur),
+            "Kapanış Kuru":    t["KapanisKur"].apply(tr_fmt_kur),
+            "Değişim %":       t["HaftaDegisim"].apply(tr_fmt_pct),
+            "Yön":             t["HaftaDegisim"].apply(lambda x: "↑" if x > 0 else "↓"),
+        })
+        return t2.sort_values("Hafta (Pzt–Paz)", ascending=False).reset_index(drop=True)
 
-    hf_t          = _hf_df_hazirla(hf_tablo)   # filtreli — ekranda göster
-    hf_t_tumumu   = _hf_df_hazirla(hf_global)  # filtresiz — indirme için
+    hf_t        = _hf_df_hazirla(hf_tablo)
+    hf_t_tumumu = _hf_df_hazirla(hf_global)
 
     st.markdown(
         f"<div style='font-size:0.75rem;color:#4a6080;font-family:DM Mono,monospace;"
@@ -2313,21 +2604,51 @@ with tab6:
     )
     st.dataframe(hf_t, use_container_width=True, height=420)
 
-    # ── Haftalık TÜM VERİ indirme ─────────────────────────────────────────
-    hf_bas_yil = int(hf_global["PztTarih"].dt.year.min())
-    hf_bit_yil = int(hf_global["CumTarih"].dt.year.max())
-    hf_bit_ay  = hf_global["CumTarih"].max().strftime("%d.%m.%Y")
+    # ── Aylık tablo ───────────────────────────────────────────────────────
+    st.markdown("""
+    <div class="section-label">◈ Aylık Değişim Tablosu (Ay Başı → Ay Sonu)
+        <span style="color:#4a9eff;font-size:0.75rem;font-weight:400;margin-left:8px;">
+        · Her ayın ilk işlem günü açılış → son işlem günü kapanış
+        </span>
+    </div>""", unsafe_allow_html=True)
+
+    ay_tablo = ay_global.sort_values(["Yil","Ay"], ascending=False).copy()
+    ay_tablo_show = pd.DataFrame({
+        "Yıl":         ay_tablo["Yil"],
+        "Ay":          ay_tablo["AyAdi"],
+        "Açılış Tarihi": ay_tablo["AcilisTarih"].dt.strftime("%d.%m.%Y"),
+        "Kapanış Tarihi": ay_tablo["KapanisTarih"].dt.strftime("%d.%m.%Y"),
+        "Açılış Kuru": ay_tablo["AcilisKur"].apply(tr_fmt_kur),
+        "Kapanış Kuru": ay_tablo["KapanisKur"].apply(tr_fmt_kur),
+        "Değişim %":   ay_tablo["AyDegisim"].apply(tr_fmt_pct),
+        "Yön":         ay_tablo["AyDegisim"].apply(lambda x: "↑" if x > 0 else "↓"),
+    }).reset_index(drop=True)
+    st.dataframe(ay_tablo_show, use_container_width=True, height=420)
+
+    # ── Çeyreklik tablo ───────────────────────────────────────────────────
+    st.markdown("""
+    <div class="section-label">◈ Çeyreklik Değişim Tablosu (Çeyrek Başı → Çeyrek Sonu)
+        <span style="color:#b794f4;font-size:0.75rem;font-weight:400;margin-left:8px;">
+        · Q1=Oca–Mar · Q2=Nis–Haz · Q3=Tem–Eyl · Q4=Eki–Ara
+        </span>
+    </div>""", unsafe_allow_html=True)
+
+    cey_tablo = cey_global.sort_values(["Yil","Ceyrek"], ascending=False).copy()
+    cey_tablo_show = pd.DataFrame({
+        "Yıl":          cey_tablo["Yil"],
+        "Çeyrek":       cey_tablo["Aralik"],
+        "Açılış Tarihi": cey_tablo["AcilisTarih"].dt.strftime("%d.%m.%Y"),
+        "Kapanış Tarihi": cey_tablo["KapanisTarih"].dt.strftime("%d.%m.%Y"),
+        "Açılış Kuru":  cey_tablo["AcilisKur"].apply(tr_fmt_kur),
+        "Kapanış Kuru": cey_tablo["KapanisKur"].apply(tr_fmt_kur),
+        "Değişim %":    cey_tablo["CeyrekDegisim"].apply(tr_fmt_pct),
+        "Yön":          cey_tablo["CeyrekDegisim"].apply(lambda x: "↑" if x > 0 else "↓"),
+    }).reset_index(drop=True)
+    st.dataframe(cey_tablo_show, use_container_width=True, height=420)
+
+    # ── Haftalık indirme ──────────────────────────────────────────────────
     st.markdown(
-        '<div class="section-label">◈ Haftalık Tüm Veri İndir '
-        '<span style="color:#4a9eff;font-size:0.8rem;font-weight:400;">'
-        '· Filtre uygulanmadan, tüm haftalar'
-        '</span></div>',
-        unsafe_allow_html=True
-    )
-    st.markdown(
-        f"<div style='font-size:0.75rem;color:#4a6080;font-family:DM Mono,monospace;"
-        f"margin-bottom:12px;'>{hf_bas_yil}–{hf_bit_yil} · Son kapanış {hf_bit_ay} · "
-        f"<b style='color:#4a9eff'>{len(hf_t_tumumu)}</b> haftalık kapanış verisi</div>",
+        '<div class="section-label">◈ Tüm Veriyi İndir</div>',
         unsafe_allow_html=True
     )
 
@@ -2335,33 +2656,34 @@ with tab6:
     with hf_dl1:
         csv_hf_tum = hf_t_tumumu.to_csv(index=False).encode("utf-8-sig")
         st.download_button(
-            "⬇ Haftalık CSV (Tümü)",
+            "⬇ Haftalık CSV",
             csv_hf_tum,
-            "haftalik_tum_veri.csv",
+            "haftalik_7gun_tum_veri.csv",
             "text/csv",
             use_container_width=True,
         )
     with hf_dl2:
         buf_hf = io.BytesIO()
         with pd.ExcelWriter(buf_hf, engine="openpyxl") as w:
-            hf_t_tumumu.to_excel(w, sheet_name="Haftalik_Tum", index=False)
+            hf_t_tumumu.to_excel(w, sheet_name="Haftalik_Tum_7gun", index=False)
             hf_t.to_excel(       w, sheet_name="Haftalik_Filtreli", index=False)
+            ay_tablo_show.to_excel(w, sheet_name="Aylik_Tum", index=False)
+            cey_tablo_show.to_excel(w, sheet_name="Ceyreklik_Tum", index=False)
         st.download_button(
-            "⬇ Haftalık Excel (Tümü)",
+            "⬇ Tüm Periyotlar Excel",
             buf_hf.getvalue(),
-            "haftalik_tum_veri.xlsx",
+            "tum_periyot_veri.xlsx",
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
         )
 
-    # ── Genel dışa aktar ─────────────────────────────────────────────────
+    # ── Genel dışa aktar ──────────────────────────────────────────────────
     st.markdown('<div class="section-label">◈ Tüm Analizi Dışa Aktar</div>', unsafe_allow_html=True)
     dc1, dc2 = st.columns(2)
     with dc1:
         csv = top_sic.to_csv(index=False).encode("utf-8-sig")
         st.download_button("⬇ Sıçramalar CSV", csv, "sicramalar.csv", "text/csv", use_container_width=True)
     with dc2:
-        # Kümülatif (günlük) — tüm veri üzerinden
         _cum_gun = df[["Tarih","Yil","Dolar_Kuru","Yuzde_Degisim"]].copy()
         _cum_gun = _cum_gun.sort_values("Tarih").reset_index(drop=True)
         _cum_gun["Kumülatif_%"] = (_cum_gun["Dolar_Kuru"] / _cum_gun["Dolar_Kuru"].iloc[0] - 1) * 100
@@ -2369,33 +2691,19 @@ with tab6:
         _cum_gun["Tarih"] = _cum_gun["Tarih"].dt.strftime("%d.%m.%Y")
         _cum_gun = _cum_gun.rename(columns={"Dolar_Kuru":"Kur","Yuzde_Degisim":"Degisim_%"})
 
-        # Kümülatif (haftalık)
-        _cum_hf = hf_global[["PztTarih","CumTarih","PztKur","CumKur","HaftaDegisim"]].copy()
-        _cum_hf = _cum_hf.sort_values("CumTarih").reset_index(drop=True)
-        _cum_hf["Kumülatif_%"] = (_cum_hf["CumKur"] / _cum_hf["CumKur"].iloc[0] - 1) * 100
-        _cum_hf["Drawdown_%"] = _cum_hf["Kumülatif_%"] - _cum_hf["Kumülatif_%"].cummax()
-        _cum_hf["Hafta"] = _cum_hf["PztTarih"].dt.strftime("%d.%m.%Y") + " – " + _cum_hf["CumTarih"].dt.strftime("%d.%m.%Y")
-        _cum_hf = _cum_hf[["Hafta","CumKur","HaftaDegisim","Kumülatif_%","Drawdown_%"]]
-        _cum_hf.columns = ["Hafta","Kur","HaftaDegisim_%","Kumülatif_%","Drawdown_%"]
-
-        # Mevsimsellik (ay bazlı ort. günlük getiri)
-        _mevs = df.groupby("Ay")["Yuzde_Degisim"].mean().reset_index()
-        _mevs["AyAdi"] = _mevs["Ay"].map(TR_AY_UZUN)
-        _mevs = _mevs[["AyAdi","Yuzde_Degisim"]].rename(columns={"Yuzde_Degisim":"OrtGunlukGetiri_%"})
-
         buf = io.BytesIO()
         with pd.ExcelWriter(buf, engine="openpyxl") as w:
-            top_sic.to_excel(    w, sheet_name="Sicramalar",        index=False)
-            hf_t_tumumu.to_excel(w, sheet_name="Haftalik_Tum",      index=False)
-            hf_t.to_excel(       w, sheet_name="Haftalik_Filtreli",  index=False)
-            df.to_excel(         w, sheet_name="Tum_Gunluk_Veri",   index=False)
-            _cum_gun.to_excel(   w, sheet_name="Kumulatif_Gunluk",  index=False)
-            _cum_hf.to_excel(    w, sheet_name="Kumulatif_Haftalik", index=False)
-            _mevs.to_excel(      w, sheet_name="Mevsimsellik",       index=False)
-            aylik.to_excel(      w, sheet_name="Aylik")
-            yillik.to_excel(     w, sheet_name="Yillik")
+            top_sic.to_excel(       w, sheet_name="Sicramalar",         index=False)
+            hf_t_tumumu.to_excel(   w, sheet_name="Haftalik_7gun_Tum",  index=False)
+            hf_t.to_excel(          w, sheet_name="Haftalik_Filtreli",  index=False)
+            ay_tablo_show.to_excel( w, sheet_name="Aylik_Tum",          index=False)
+            cey_tablo_show.to_excel(w, sheet_name="Ceyreklik_Tum",      index=False)
+            df.to_excel(            w, sheet_name="Tum_Gunluk_Veri",    index=False)
+            _cum_gun.to_excel(      w, sheet_name="Kumulatif_Gunluk",   index=False)
+            aylik_ozet.to_excel(    w, sheet_name="Aylik_Sicrama_Ozet")
+            yillik_ozet.to_excel(   w, sheet_name="Yillik_Sicrama_Ozet")
             if sp_df is not None:
-                sp_df.to_excel(  w, sheet_name="Spread",            index=False)
+                sp_df.to_excel(     w, sheet_name="Spread",             index=False)
         st.download_button(
             "⬇ Excel İndir (Tüm Analiz)",
             buf.getvalue(),
