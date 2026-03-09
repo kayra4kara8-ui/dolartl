@@ -550,6 +550,38 @@ def ceyreklik_veri_hesapla(df):
     return cey
 
 
+# ─── YILLIK VERİ (Yıl başı → Yıl sonu) ──────────────────────────────────────
+def yillik_veri_hesapla(df):
+    """
+    Yıllık periyot: Her yılın ilk işlem günü → son işlem günü.
+    Değişim = (yıl sonu kuru / yıl başı kuru - 1) * 100
+    """
+    df_y = df.copy()
+    df_y["Yil"] = df_y["Tarih"].dt.year
+
+    _y_ilk = df_y.groupby("Yil").agg(
+        AcilisTarih=("Tarih", "min"),
+        AcilisKur=("Dolar_Kuru", "first")
+    ).reset_index()
+
+    _y_son = df_y.groupby("Yil").agg(
+        KapanisTarih=("Tarih", "max"),
+        KapanisKur=("Dolar_Kuru", "last")
+    ).reset_index()
+
+    yil = _y_ilk.merge(_y_son, on="Yil")
+    yil["YilDegisim"] = (yil["KapanisKur"] / yil["AcilisKur"] - 1) * 100
+    yil["AbsDegisim"] = yil["YilDegisim"].abs()
+    yil["XTarih"] = yil["KapanisTarih"]
+    yil["Aralik"] = yil["Yil"].astype(str)
+    yil = yil.dropna(subset=["YilDegisim"]).reset_index(drop=True)
+    yil["_acs_str"] = yil["AcilisKur"].apply(tr_fmt_kur)
+    yil["_kap_str"] = yil["KapanisKur"].apply(tr_fmt_kur)
+    yil["_yil_str"] = yil["YilDegisim"].apply(tr_fmt_pct)
+
+    return yil
+
+
 # ─── HEADER ──────────────────────────────────────────────────────────────────
 st.markdown("""
 <div style="padding: 8px 0 4px 0;">
@@ -722,6 +754,9 @@ ay_global = aylik_veri_hesapla(df)
 
 # ─── ÇEYREKLİK VERİ ──────────────────────────────────────────────────────────
 cey_global = ceyreklik_veri_hesapla(df)
+
+# ─── YILLIK VERİ ─────────────────────────────────────────────────────────────
+yil_global = yillik_veri_hesapla(df)
 
 # ─── SPREAD VERİSİ ───────────────────────────────────────────────────────────
 sp_df = spread_hesapla(df_raw, doviz_sec)
@@ -1189,6 +1224,77 @@ with tab2:
     </div>""", unsafe_allow_html=True)
     st.markdown("<br>", unsafe_allow_html=True)
 
+    # ════ YILLIK DEĞİŞİM BAR CHART ════════════════════════════════════════
+    st.markdown("""
+    <div class="section-label">◈ Yıllık Değişim — Yıl Başı → Yıl Sonu
+        <span style="color:#f6ad55;font-size:0.75rem;font-weight:400;margin-left:8px;">
+        · Her yılın ilk işlem günü açılış → son işlem günü kapanış
+        </span>
+    </div>""", unsafe_allow_html=True)
+
+    yil = yil_global.copy()
+    yil["renk"] = yil["YilDegisim"].apply(lambda x: "#00d4aa" if x >= 0 else "#ff4d6a")
+    fig_yil_bar = go.Figure()
+    fig_yil_bar.add_trace(go.Bar(
+        x=yil["Aralik"], y=yil["YilDegisim"],
+        marker_color=yil["renk"].values, opacity=0.9,
+        text=yil["YilDegisim"].apply(lambda x: tr_fmt_pct(x, 1)),
+        textposition="outside",
+        textfont=dict(size=9, color="#c9d4e8", family="DM Mono, monospace"),
+        customdata=list(zip(
+            yil["Aralik"],
+            yil["AcilisTarih"].dt.strftime("%d.%m.%Y"),
+            yil["KapanisTarih"].dt.strftime("%d.%m.%Y"),
+            yil["_acs_str"], yil["_kap_str"], yil["_yil_str"]
+        )),
+        hovertemplate="<b>%{customdata[0]}</b><br>"
+                      "Açılış: %{customdata[1]} · %{customdata[3]} ₺<br>"
+                      "Kapanış: %{customdata[2]} · %{customdata[4]} ₺<br>"
+                      "Yıllık Değişim: <b>%{customdata[5]}</b><extra></extra>"
+    ))
+    fig_yil_bar.add_hline(y=0, line_color="#2a4a7a", line_width=1)
+    tv_yil, tt_yil = safe_ticks(yil["YilDegisim"].min(), yil["YilDegisim"].max(), n=8, decimals=0, suffix="%")
+    apply_base(fig_yil_bar, height=420,
+        title=dict(text="YILLIK DEĞİŞİM (Yıl Başı→Yıl Sonu) · Her yılın ilk işlem günü → son işlem günü kapanışı",
+                   font=dict(size=11, color="#4a6080", family="DM Mono, monospace"), x=0),
+        xaxis=dict(gridcolor="#131c2e", tickfont=dict(size=11, color="#4a6080"), type="category"),
+        yaxis={**yt(tv_yil, tt_yil, {"gridcolor":"#131c2e","tickfont":dict(size=10,color="#4a6080"),"ticksuffix":"%"})},
+        showlegend=False, hovermode="closest")
+    st.plotly_chart(fig_yil_bar, use_container_width=True)
+
+    yil_ort  = yil["YilDegisim"].mean()
+    yil_maks = yil["YilDegisim"].max()
+    yil_mins = yil["YilDegisim"].min()
+    yil_poz  = (yil["YilDegisim"] > 0).sum()
+    yil_neg  = (yil["YilDegisim"] < 0).sum()
+    yil_en_iyi_yil  = int(yil.loc[yil["YilDegisim"].idxmax(), "Yil"])
+    yil_en_kotu_yil = int(yil.loc[yil["YilDegisim"].idxmin(), "Yil"])
+    sign_yil = "+" if yil_ort >= 0 else ""
+    st.markdown(f"""
+    <div class="metric-row" style="grid-template-columns: repeat(5, 1fr);">
+      <div class="metric-card" style="border-top:2px solid #f6ad55;">
+        <div class="metric-label">Yıllık Ort.</div>
+        <div class="metric-value metric-{'pos' if yil_ort>=0 else 'neg'}">{sign_yil}{f'{yil_ort:.2f}'.replace('.',',')}%</div>
+        <div class="metric-sub">Yıl başı→yıl sonu ort.</div></div>
+      <div class="metric-card" style="border-top:2px solid #00d4aa;">
+        <div class="metric-label">Pozitif Yıl</div>
+        <div class="metric-value metric-pos">{yil_poz}</div>
+        <div class="metric-sub">{len(yil)} yıl içinde</div></div>
+      <div class="metric-card" style="border-top:2px solid #ff4d6a;">
+        <div class="metric-label">Negatif Yıl</div>
+        <div class="metric-value metric-neg">{yil_neg}</div>
+        <div class="metric-sub">{len(yil)} yıl içinde</div></div>
+      <div class="metric-card">
+        <div class="metric-label">En İyi Yıl</div>
+        <div class="metric-value metric-pos">+{f'{yil_maks:.2f}'.replace('.',',')}%</div>
+        <div class="metric-sub">{yil_en_iyi_yil}</div></div>
+      <div class="metric-card">
+        <div class="metric-label">En Kötü Yıl</div>
+        <div class="metric-value metric-neg">{f'{yil_mins:.2f}'.replace('.',',')}%</div>
+        <div class="metric-sub">{yil_en_kotu_yil}</div></div>
+    </div>""", unsafe_allow_html=True)
+    st.markdown("<br>", unsafe_allow_html=True)
+
 with tab3:
     if "Gun_Adi_TR" not in df.columns:
         df["Gun_Adi_TR"] = df["Gun_Adi"].map(TR_GUN)
@@ -1317,6 +1423,44 @@ with tab3:
         yaxis=dict(tickfont=dict(size=11, color="#4a6080"), autorange="reversed"))
     st.plotly_chart(fig_cey_heat, use_container_width=True)
 
+    # ════ YILLIK BAR CHART (Tab3) ═════════════════════════════════════════
+    st.markdown("""
+    <div class="section-label">◈ Yıllık Değişim — Yıl Başı → Yıl Sonu
+        <span style="color:#f6ad55;font-size:0.75rem;font-weight:400;margin-left:8px;">
+        · Her yılın ilk işlem günü açılış → son işlem günü kapanış
+        </span>
+    </div>""", unsafe_allow_html=True)
+
+    _yil_t3 = yil_global.copy()
+    _yil_t3["renk"] = _yil_t3["YilDegisim"].apply(lambda x: "#00d4aa" if x >= 0 else "#ff4d6a")
+    fig_yil_t3 = go.Figure()
+    fig_yil_t3.add_trace(go.Bar(
+        x=_yil_t3["Aralik"], y=_yil_t3["YilDegisim"],
+        marker_color=_yil_t3["renk"].values, opacity=0.9,
+        text=_yil_t3["YilDegisim"].apply(lambda x: tr_fmt_pct(x, 1)),
+        textposition="outside",
+        textfont=dict(size=9, color="#c9d4e8", family="DM Mono, monospace"),
+        customdata=list(zip(
+            _yil_t3["Aralik"],
+            _yil_t3["AcilisTarih"].dt.strftime("%d.%m.%Y"),
+            _yil_t3["KapanisTarih"].dt.strftime("%d.%m.%Y"),
+            _yil_t3["_acs_str"], _yil_t3["_kap_str"], _yil_t3["_yil_str"]
+        )),
+        hovertemplate="<b>%{customdata[0]}</b><br>"
+                      "Açılış: %{customdata[1]} · %{customdata[3]} ₺<br>"
+                      "Kapanış: %{customdata[2]} · %{customdata[4]} ₺<br>"
+                      "Yıllık Değişim: <b>%{customdata[5]}</b><extra></extra>"
+    ))
+    fig_yil_t3.add_hline(y=0, line_color="#2a4a7a", line_width=1)
+    tv_yil_t3, tt_yil_t3 = safe_ticks(_yil_t3["YilDegisim"].min(), _yil_t3["YilDegisim"].max(), n=8, decimals=0, suffix="%")
+    apply_base(fig_yil_t3, height=420,
+        title=dict(text="YILLIK DEĞİŞİM (Yıl Başı→Yıl Sonu)",
+                   font=dict(size=11, color="#4a6080", family="DM Mono, monospace"), x=0),
+        xaxis=dict(gridcolor="#131c2e", tickfont=dict(size=11, color="#4a6080"), type="category"),
+        yaxis={**yt(tv_yil_t3, tt_yil_t3, {"gridcolor":"#131c2e","tickfont":dict(size=10,color="#4a6080"),"ticksuffix":"%"})},
+        showlegend=False, hovermode="closest")
+    st.plotly_chart(fig_yil_t3, use_container_width=True)
+
 # ════════════ TAB 4 — KÜMÜLATİF & PERFORMANS ════════════
 with tab4:
 
@@ -1419,18 +1563,14 @@ with tab4:
         x_fmt, adet_label = "%Y", "Çeyreklik Gözlem (Çeyrek Başı→Sonu)"
 
     else:  # Yıllık
-        df_cum_y = df_cum_filter.copy()
-        df_cum_y["Yil"] = df_cum_y["Tarih"].dt.year
-        yil_g = df_cum_y.groupby("Yil").agg(
-            AcilisTarih=("Tarih", "min"), AcilisKur=("Dolar_Kuru", "first"),
-            KapanisTarih=("Tarih", "max"), KapanisKur=("Dolar_Kuru", "last")
-        ).reset_index()
-        yil_g["YilDegisim"] = (yil_g["KapanisKur"] / yil_g["AcilisKur"] - 1) * 100
+        yil_c = yil_global[
+            (yil_global["Yil"] >= yil_aralik[0]) &
+            (yil_global["Yil"] <= yil_aralik[1])].copy()
         periyot_df = pd.DataFrame({
-            "Tarih":   yil_g["KapanisTarih"].values,
-            "Kur":     yil_g["KapanisKur"].values,
-            "Degisim": yil_g["YilDegisim"].values,
-            "Yil":     yil_g["Yil"].values,
+            "Tarih":   yil_c["KapanisTarih"].values,
+            "Kur":     yil_c["KapanisKur"].values,
+            "Degisim": yil_c["YilDegisim"].values,
+            "Yil":     yil_c["Yil"].values,
         })
         x_fmt, adet_label = "%Y", "Yıllık Gözlem (Yıl Başı→Sonu)"
 
@@ -2646,6 +2786,26 @@ with tab6:
     }).reset_index(drop=True)
     st.dataframe(cey_tablo_show, use_container_width=True, height=420)
 
+    # ── Yıllık Değişim Tablosu ────────────────────────────────────────────
+    st.markdown("""
+    <div class="section-label">◈ Yıllık Değişim Tablosu (Yıl Başı → Yıl Sonu)
+        <span style="color:#f6ad55;font-size:0.75rem;font-weight:400;margin-left:8px;">
+        · Her yılın ilk işlem günü açılış → son işlem günü kapanış
+        </span>
+    </div>""", unsafe_allow_html=True)
+
+    yil_tablo = yil_global.sort_values("Yil", ascending=False).copy()
+    yil_tablo_show = pd.DataFrame({
+        "Yıl":            yil_tablo["Yil"],
+        "Açılış Tarihi":  yil_tablo["AcilisTarih"].dt.strftime("%d.%m.%Y"),
+        "Kapanış Tarihi": yil_tablo["KapanisTarih"].dt.strftime("%d.%m.%Y"),
+        "Açılış Kuru":    yil_tablo["AcilisKur"].apply(tr_fmt_kur),
+        "Kapanış Kuru":   yil_tablo["KapanisKur"].apply(tr_fmt_kur),
+        "Değişim %":      yil_tablo["YilDegisim"].apply(tr_fmt_pct),
+        "Yön":            yil_tablo["YilDegisim"].apply(lambda x: "↑" if x > 0 else "↓"),
+    }).reset_index(drop=True)
+    st.dataframe(yil_tablo_show, use_container_width=True, height=420)
+
     # ── Haftalık indirme ──────────────────────────────────────────────────
     st.markdown(
         '<div class="section-label">◈ Tüm Veriyi İndir</div>',
@@ -2669,6 +2829,7 @@ with tab6:
             hf_t.to_excel(       w, sheet_name="Haftalik_Filtreli", index=False)
             ay_tablo_show.to_excel(w, sheet_name="Aylik_Tum", index=False)
             cey_tablo_show.to_excel(w, sheet_name="Ceyreklik_Tum", index=False)
+            yil_tablo_show.to_excel(w, sheet_name="Yillik_Tum", index=False)
         st.download_button(
             "⬇ Tüm Periyotlar Excel",
             buf_hf.getvalue(),
